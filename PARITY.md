@@ -1,6 +1,6 @@
 # Feature parity
 
-This site ports the user-facing behavior of Term Organize that a browser can do. Logic that the Swift app tests (search, Banner HTML, degree-plan text, schedule search, degree audit, NUpath, rooms, watchlist comparison) lives in `src/lib` and is covered by `src/lib/core.test.ts` plus the ported modules’ own structure. Native-only surfaces are called out below.
+This site ports the user-facing behavior of Term Organize that a browser can do. The Swift test suites are ported assertion by assertion (see Tests). Native-only surfaces are called out below.
 
 **Not affiliated with, endorsed by, or sponsored by Northeastern University or Sandbox.**
 
@@ -10,26 +10,26 @@ This site ports the user-facing behavior of Term Organize that a browser can do.
 | `Core/Banner` client, parsers, catalog builder | `src/lib/banner.ts`, `src/lib/banner-server.ts`, `src/app/api/banner/*`, `src/app/api/catalog/[term]` | Ported. The server holds the Banner cookie. Course HTML is cached for 60 seconds. `POST /api/catalog/:term` downloads every section of any term Banner lists (`CatalogBuilder.merge` / `CatalogRepository.syncTerm`) and keeps it on disk. The browser keeps a copy in IndexedDB. |
 | `Core/ProgramCatalog` | `src/lib/degree/catalog-parser.ts`, `src/app/api/catalog-site` | Ported. HTML is cached for a week. |
 | `Logic/Search` (typos, shorthand, filters, index) | `src/lib/search.ts`, `src/lib/catalog-index.ts`, `/search` | Ported |
-| Course page: description, requisite trees, postreqs, sections, seats | `/course/[term]/[subject]/[number]` | Ported. Opening a course refreshes seats from Banner. |
+| Course page: description, requisite trees, postreqs, sections, seats | `/course/[term]/[subject]/[number]` | Ported. Opening a course refreshes seats from Banner. A course the open term does not list is read from Banner’s course catalog (`CourseCatalogEntryView`): title, credits, prerequisites, and corequisites, with a note when it is not offered this term or was retired. |
 | Section page and CRN links | `/section/[term]/[crn]` | Ported. Opening a term that is not on disk builds that term’s catalog, then the CRN is resolved in it. |
 | Schedule plans, week calendar, conflicts | `/schedule` | Ported |
 | Constraint generator, scoring, reasons, empty explanations, relaxations | `src/lib/schedule/*` | Ported. The page keeps 12 results and stops a search that runs past about a second so the tab stays responsive. Very large combinations can be sampled, and the page says when the search was not exhaustive. |
-| Preferences survey | `/schedule` | Ported (time of day, limits, days off, format, seats, campus, hide-full). |
+| Preferences survey | `/schedule` | Ported (time of day, limits, days off, blocked times, format, seats, campus, preferred and avoided professors, hide-full). |
 | Natural-language preferences (`ScheduleAssistant`, Apple Intelligence) | `src/lib/nl.ts` | Web substitute. A deterministic reader uses the same cues (times, days off, lunch, format, seats). It does not call a model. |
 | Export `.ics`, copy CRNs, share image | `/schedule` | Ported. The image is a PNG download. |
 | Degree-plan text import/export | `src/lib/degree-format.ts` | Ported, including the View Plan line layout. |
 | Degree-plan PDF import | `src/lib/pdf-text.ts` (pdf.js) | Ported in the browser. |
 | Degree-plan PDF export (A4, Helvetica 12 pt, dash bullets) | `src/lib/degree-pdf.ts` | Ported |
-| Plan editing, credits, duplicate and prerequisite checks, autofill | `/degree` | Ported |
+| Plan editing, credits, duplicate and prerequisite checks, autofill | `/degree` | Ported. Prerequisites the open term does not list come from Banner’s course catalog (`CourseInfoStore.requisiteLookup`). |
 | Semester-move suggestions (`DegreePlanReordering`, offering history) | `src/lib/degree/reordering.ts`, `src/lib/offering-history.ts`, `/api/banner/offerings` | Ported. The degree plan lists a move when a course is missing a prerequisite or has no section in the open term. An empty schedule lists the same moves for the blocking courses when a degree-plan semester matches the term. History covers about two years of Northeastern terms, summers included, and is cached. |
 | Degree audit, optimal matching, substitutions, petitions, waivers | `src/lib/degree/audit.ts` | Ported. A petition is a replacement on a requirement; a waiver removes it; “count a course” forces a placement. |
-| NUpath and university-wide minimums | `src/lib/degree/nupath.ts`, catalog university-wide page | Ported. GPA and residency stay unchecked because a plan has no grades, matching the app. |
-| Equivalences and renumbered courses | `src/lib/equivalences.ts`, degree plan editor | Ported. Declare “CS 2500 counts as CS 2510” on the plan. |
-| Older-term catalog checks | Catalog year picker on `/degree`, on-demand term catalogs | Ported. Catalog years come from catalog.northeastern.edu. Course sections for any Banner term are downloaded on demand; descriptions already known from Fall 2026 are reused. |
+| NUpath and university-wide minimums | `src/lib/degree/nupath.ts`, catalog university-wide page, `CourseAttributeRepository` | Ported. Attributes for a course the open term has no sections of are looked up from recent terms. GPA and residency stay unchecked because a plan has no grades, matching the app. |
+| Equivalences and renumbered courses | `src/lib/equivalences.ts`, `src/lib/degree/suggestions.ts`, degree plan editor | Ported. Declare “CS 2500 counts as CS 2510” on the plan. A course the newest catalog no longer lists can prompt “Does CS 2510 count as CS 2100?” (Confirm or Dismiss). A substitution that is likely a renumbering can become “Same course, new number.” |
+| Older-term catalog checks | Catalog year picker on `/degree`, on-demand term catalogs, `POST /api/banner/course-info` | Ported. Catalog years come from catalog.northeastern.edu. Course sections for any Banner term are downloaded on demand. Descriptions already known from Fall 2026 are reused. Catalog entries (prerequisites, credits, mutual exclusions) are fetched per course from Banner’s effective-dated catalog and cached on disk. |
 | Seat watch | `/watchlist`, `src/lib/watchlist.ts` | Partial. The tab polls Banner on a timer and can show a Web Notification (service worker in `public/sw.js`). A closed browser cannot poll. There is no VAPID push server. |
 | Free rooms | `/rooms` | Ported from the snapshot’s meetings, in campus time. |
 | Professors and teaching calendars | `/professors`, `/professor/[name]` | Ported from section instructors in the snapshot. |
-| Home, recents, saved courses, up next | `/` | Ported. Up next is the web stand-in for the widget. |
+| Home, recents, saved courses, up next | `/` | Ported. Saving a course from its page lists it on the home page. Up next is the web stand-in for the widget. |
 | Settings, onboarding, calendar hours, weekends, dark mode | `/settings` and the header | Ported |
 | Legal text, AGPL, SearchNEU attribution | `/legal`, `/license`, `NOTICE.md` | Ported |
 | Persistence | `localStorage` (`term-organize.user.v1`), IndexedDB catalog cache, JSON export/import | Web substitute for on-device storage. |

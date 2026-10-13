@@ -3,14 +3,16 @@
 import { NuChips, RequisiteTree, SeatText, courseHref, meetingLabel, sectionHref } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
-import type { Course, CourseSection } from "@/lib/models";
-import { creditsLabel, instructorLabel, keyId, nupathsFromAttributes, requisiteSummary, scheduleSummary, seatsLabel } from "@/lib/models";
-import { sortedSections as sortSections } from "@/lib/catalog-index";
+import { courseInfoCreditsLabel } from "@/lib/degree-logic";
+import type { Course, CourseKey, CourseSection } from "@/lib/models";
+import { courseKeyOf, creditsLabel, instructorLabel, keyId, nupathsFromAttributes, offeringTermLabel, referencedCourses, requisiteSummary, scheduleSummary, seatsLabel } from "@/lib/models";
+import { retryCourseFacts, useCourseFacts, type CatalogEntry } from "@/lib/plan-course-info";
+import { sortedSections as sortSections, type CatalogIndex } from "@/lib/catalog-index";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 export function CourseView({ term, subject, number }: { term: string; subject: string; number: string }) {
-  const { index, termCode, setTermCode, addCourseToPlan, toggleSaved, isSaved, rememberCourse, watchSection, unwatch, isWatched, applyLive } = useApp();
+  const { index, termCode, terms, setTermCode, addCourseToPlan, toggleSaved, isSaved, rememberCourse, watchSection, unwatch, isWatched, applyLive } = useApp();
   const key = useMemo(() => ({ subject, number }), [subject, number]);
   const catalogCourse = index?.course(key);
   const catalogSections = index?.sectionsOf(key) ?? [];
@@ -27,8 +29,15 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
     rememberCourse(key);
   }, [key, rememberCourse]);
 
+  const indexMatches = index?.catalog.term.code === term;
+  const missingFromTerm = indexMatches && !catalogCourse;
+  const facts = useCourseFacts(missingFromTerm ? { keys: [key], attributes: false, suggest: false } : null);
+  const entry = facts.info(key);
+  const entryState = facts.state(key);
+
   const course = catalogCourse ? { ...catalogCourse, ...liveCourse } : liveCourse;
   const sections = sortSections(liveSections ?? catalogSections);
+  const termLabel = terms.find((item) => item.code === term)?.name ?? term;
 
   async function refresh() {
     setStatus("loading");
@@ -53,6 +62,25 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term, subject, number]);
 
+  const hasLiveSections = (liveSections?.length ?? 0) > 0;
+  if (missingFromTerm && !hasLiveSections) {
+    if (status === "idle" || status === "loading") return <p className="text-muted">Asking Banner for {subject} {number}…</p>;
+    return (
+      <CatalogEntry
+        courseKey={key}
+        term={term}
+        termLabel={termLabel}
+        entry={entry}
+        state={entryState}
+        sectionError={status === "error" ? error : null}
+        dependents={dependentsOf(key, index)}
+        onRetry={() => {
+          void retryCourseFacts({ keys: [key], attributes: false, suggest: false });
+          void refresh();
+        }}
+      />
+    );
+  }
   if (!course && status === "loading") return <p className="text-muted">Asking Banner for {subject} {number}…</p>;
   if (!course && status === "error") {
     return (
@@ -203,6 +231,129 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function dependentsOf(key: CourseKey, index: CatalogIndex | null): CourseKey[] {
+  if (!index) return [];
+  const id = keyId(key);
+  return index.courses.flatMap((course) => {
+    if (!course.prereqs || !referencedCourses(course.prereqs).some((item) => keyId(item) === id)) return [];
+    return [courseKeyOf(course)];
+  });
+}
+
+function CatalogEntry({
+  courseKey,
+  term,
+  termLabel,
+  entry,
+  state,
+  sectionError,
+  dependents,
+  onRetry,
+}: {
+  courseKey: CourseKey;
+  term: string;
+  termLabel: string;
+  entry: CatalogEntry | null;
+  state: "unknown" | "loading" | "found" | "notFound" | "failed";
+  sectionError: string | null;
+  dependents: CourseKey[];
+  onRetry: () => void;
+}) {
+  const [stillFailing, setStillFailing] = useState(false);
+  const code = `${courseKey.subject} ${courseKey.number}`;
+
+  if (state === "unknown" || state === "loading") {
+    return <p className="text-muted">Checking Banner&apos;s catalog…</p>;
+  }
+  if (state === "found" && entry) {
+    const credits = courseInfoCreditsLabel(entry.minCredits, entry.maxCredits);
+    const availability = entry.isRetired === true ? `No longer offered; last listed ${offeringTermLabel(entry.sourceTerm)}` : `Not offered in ${termLabel}`;
+    return (
+      <div className="grid gap-5">
+        <header>
+          <p className="text-sm font-semibold text-accent">{code}</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{entry.title || code}</h1>
+          <p className="mt-1 text-muted">{[credits, availability].filter(Boolean).join(" · ")}</p>
+        </header>
+        {sectionError ? <p className="text-sm text-muted">{sectionError}</p> : null}
+        <div className="grid gap-4 md:grid-cols-2">
+          <section className="card p-5">
+            <h2 className="font-semibold">Prerequisites</h2>
+            {entry.prerequisites ? (
+              <>
+                <p className="mt-2 text-sm text-muted">{requisiteSummary(entry.prerequisites)}</p>
+                <div className="mt-3">
+                  <RequisiteTree node={entry.prerequisites} term={term} />
+                </div>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-muted">None listed.</p>
+            )}
+          </section>
+          <section className="card p-5">
+            <h2 className="font-semibold">Corequisites</h2>
+            {entry.corequisites ? (
+              <>
+                <p className="mt-2 text-sm text-muted">{requisiteSummary(entry.corequisites)}</p>
+                <div className="mt-3">
+                  <RequisiteTree node={entry.corequisites} term={term} />
+                </div>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-muted">None listed.</p>
+            )}
+            <h3 className="mt-5 font-semibold">Prerequisite for</h3>
+            {dependents.length ? (
+              <ul className="mt-2 grid gap-1 text-sm">
+                {dependents.map((item) => (
+                  <li key={keyId(item)}>
+                    <Link className="underline" href={courseHref(term, item)}>
+                      {keyId(item)}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted">No later course in this snapshot lists it.</p>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  }
+  if (state === "failed") {
+    return (
+      <div className="card p-5">
+        <h1 className="text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
+        <p className="mt-2 text-muted">
+          {stillFailing
+            ? "Banner's course catalog still isn't answering. Try again in a minute."
+            : "Banner's course catalog didn't answer, so the course's details couldn't be checked."}
+        </p>
+        <Button
+          className="mt-3"
+          type="button"
+          onClick={() => {
+            onRetry();
+            setStillFailing(true);
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="card p-5">
+      <h1 className="text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
+      <p className="mt-2 text-muted">Banner&apos;s recent course catalogs don&apos;t list it either, so the course code may have changed.</p>
+      <Link className="btn mt-3 inline-flex" href={`/search?q=${encodeURIComponent(code)}`}>
+        Search for {code}
+      </Link>
     </div>
   );
 }

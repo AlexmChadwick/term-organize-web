@@ -83,6 +83,8 @@ export interface CalendarBlock {
   title: string;
   detail: string;
   colorIndex: number;
+  /** Overrides the course palette. Blocked times use a neutral fill. */
+  paint?: { fill: string; stroke: string; text: string };
   href?: string;
   column?: number;
   columns?: number;
@@ -128,7 +130,7 @@ export function WeekCalendar({
               .map((block) => {
                 const top = ((block.start - start) / span) * 100;
                 const height = Math.max(4, ((block.end - block.start) / span) * 100);
-                const color = courseColorAt(block.colorIndex);
+                const color = block.paint ?? courseColorAt(block.colorIndex);
                 const width = 100 / (block.columns || 1);
                 const left = (block.column || 0) * width;
                 const body = (

@@ -96,7 +96,24 @@ export default function HomePage() {
           <p className="mt-3 text-sm text-muted">{user.watchlist.length ? `${user.watchlist.length} section${user.watchlist.length === 1 ? "" : "s"} on the seat watch.` : "Seat alerts refresh while this tab is open."}</p>
         </section>
         <section className="card p-5">
-          <h2 className="font-semibold">Recent</h2>
+          <h2 className="font-semibold">Saved</h2>
+          {user.saved.filter((item) => item.termCode === termCode).length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Save a course from its page and it stays here for this term.</p>
+          ) : (
+            <ul className="mt-2 grid gap-1 text-sm">
+              {user.saved
+                .filter((item) => item.termCode === termCode)
+                .slice(0, 8)
+                .map((item) => (
+                  <li key={keyId(item.key)}>
+                    <Link className="underline" href={courseHref(termCode, item.key)}>
+                      {keyId(item.key)}
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+          )}
+          <h2 className="mt-4 font-semibold">Recent</h2>
           {user.recents.filter((item) => item.termCode === termCode).length === 0 ? (
             <p className="mt-2 text-sm text-muted">Courses you open land here.</p>
           ) : (

@@ -1,6 +1,6 @@
 "use client";
 
-import { WeekCalendar, blocksFromSections, courseHref } from "@/components/bits";
+import { WeekCalendar, blocksFromSections, courseHref, type CalendarBlock } from "@/components/bits";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, TextArea, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
@@ -8,12 +8,12 @@ import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
 import { sectionsToICS, downloadText } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
-import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
+import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
-import { emptyPreferences, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type TimeBand, type TimePreference } from "@/lib/preferences";
+import { blockedTimeIsValid, emptyPreferences, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
 import { analyzeEmptyResult, courseInputsFor, explainGeneration, generateSchedules, ScheduleNoResultsText, type ScheduleGenerationResult, type ScheduleNoResults, type ScheduleSortOption } from "@/lib/schedule";
 import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
-import { nextColorIndex } from "@/lib/user";
+import { newId, nextColorIndex } from "@/lib/user";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -329,7 +329,7 @@ export default function SchedulePage() {
           ) : null}
           <section className="card overflow-x-auto p-3">
             <WeekCalendar
-              blocks={blocksFromSections(selected, colorFor, termCode)}
+              blocks={[...blocksFromSections(selected, colorFor, termCode), ...blocksFromBlocked(prefs.blockedTimes)]}
               startHour={hours.start}
               endHour={hours.end}
               showWeekends={user.preferences.showWeekends}
@@ -346,7 +346,7 @@ export default function SchedulePage() {
             >
               Export .ics
             </Button>
-            <Button type="button" variant="ghost" onClick={() => void shareImage(selected, active?.name ?? "Schedule", colorFor, hours.start, hours.end, user.preferences.showWeekends)}>
+            <Button type="button" variant="ghost" onClick={() => void shareImage(selected, active?.name ?? "Schedule", colorFor, hours.start, hours.end, user.preferences.showWeekends, prefs.blockedTimes)}>
               Share image
             </Button>
           </div>
@@ -423,6 +423,37 @@ export default function SchedulePage() {
                 </select>
               </label>
             </div>
+            <BlockedTimesEditor
+              blocks={prefs.blockedTimes}
+              onChange={(blockedTimes) =>
+                updatePlan(current().id, (item) => ({
+                  ...item,
+                  preferences: { ...(item.preferences ?? emptyPreferences()), blockedTimes },
+                }))
+              }
+            />
+            <InstructorNames
+              label="Prefer these professors"
+              placeholder="Last, First — press Enter"
+              names={prefs.preferredInstructors}
+              onChange={(preferredInstructors) =>
+                updatePlan(current().id, (item) => ({
+                  ...item,
+                  preferences: { ...(item.preferences ?? emptyPreferences()), preferredInstructors },
+                }))
+              }
+            />
+            <InstructorNames
+              label="Avoid these professors"
+              placeholder="Last, First — press Enter"
+              names={prefs.avoidedInstructors}
+              onChange={(avoidedInstructors) =>
+                updatePlan(current().id, (item) => ({
+                  ...item,
+                  preferences: { ...(item.preferences ?? emptyPreferences()), avoidedInstructors },
+                }))
+              }
+            />
             <div className="flex flex-wrap gap-1">
               {DAY_SHORT.map((label, day) => {
                 const on = ((prefs.daysOff ?? 0) & (1 << day)) !== 0;
@@ -561,6 +592,165 @@ async function copyCrns(sections: CourseSection[]) {
   await navigator.clipboard.writeText(text);
 }
 
+const BLOCKED_PAINT = { fill: "rgba(110,97,100,0.16)", stroke: "#6e6164", text: "#3d3336" };
+const NAME_IDEAS = ["Club meeting", "Work", "Commute", "Team practice", "Appointment", "Study group"];
+
+function blocksFromBlocked(blocks: BlockedTime[]) {
+  const out: CalendarBlock[] = [];
+  for (const block of blocks) {
+    if (!blockedTimeIsValid(block) || !block.isEnabled) continue;
+    for (const day of dayIndices(block.days)) {
+      out.push({
+        id: `${block.id}-${day}`,
+        day,
+        start: block.start,
+        end: block.end,
+        title: block.label.trim() || "Blocked",
+        detail: block.strength === "preferred" ? "If I must" : "Blocked",
+        colorIndex: 0,
+        paint: BLOCKED_PAINT,
+      });
+    }
+  }
+  return out;
+}
+
+function BlockedTimesEditor({ blocks, onChange }: { blocks: BlockedTime[]; onChange: (next: BlockedTime[]) => void }) {
+  function patch(id: string, change: Partial<BlockedTime>) {
+    onChange(blocks.map((block) => (block.id === id ? { ...block, ...change } : block)));
+  }
+  return (
+    <div className="grid gap-2">
+      <div>
+        <h3 className="font-semibold">Blocked times</h3>
+        <p className="text-sm text-muted">Classes won’t be scheduled over these. Think club meetings, work, a commute, or practice.</p>
+      </div>
+      {blocks.map((block) => (
+        <div key={block.id} className="grid gap-2 rounded-xl border border-line p-3">
+          <TextInput aria-label="Blocked time name" value={block.label} placeholder="Name" onChange={(event) => patch(block.id, { label: event.target.value })} />
+          <div className="flex flex-wrap gap-1">
+            {NAME_IDEAS.map((idea) => (
+              <button key={idea} className="chip" type="button" onClick={() => patch(block.id, { label: idea })}>
+                {idea}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {DAY_SHORT.map((label, day) => {
+              const on = (block.days & (1 << day)) !== 0;
+              return (
+                <button key={label} className={`chip ${on ? "border-accent text-accent" : ""}`} type="button" onClick={() => patch(block.id, { days: (block.days ^ (1 << day)) as BlockedTime["days"] })}>
+                  {on ? `${label} blocked` : label}
+                </button>
+              );
+            })}
+          </div>
+          {block.days === 0 ? <p className="text-sm text-warn">Choose at least one day.</p> : null}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="label">
+              Starts
+              <input
+                className="field"
+                type="time"
+                value={minutesToTime(block.start)}
+                onChange={(event) => {
+                  const minutes = timeToMinutes(event.target.value);
+                  if (minutes == null) return;
+                  const end = block.end <= minutes ? Math.min(minutes + 60, 24 * 60 - 1) : block.end;
+                  patch(block.id, { start: minutes, end });
+                }}
+              />
+            </label>
+            <label className="label">
+              Ends
+              <input
+                className="field"
+                type="time"
+                value={minutesToTime(block.end)}
+                onChange={(event) => {
+                  const minutes = timeToMinutes(event.target.value);
+                  if (minutes == null) return;
+                  patch(block.id, { end: minutes });
+                }}
+              />
+            </label>
+          </div>
+          {block.end <= block.start ? <p className="text-sm text-warn">It has to end after it starts.</p> : null}
+          <label className="label">
+            Classes during this time
+            <select className="select" value={block.strength} onChange={(event) => patch(block.id, { strength: event.target.value as BlockedTime["strength"] })}>
+              <option value="required">Never</option>
+              <option value="preferred">If I must</option>
+            </select>
+          </label>
+          <p className="text-sm text-muted">
+            {block.strength === "required"
+              ? "Sections that meet during this time are left out of your schedules."
+              : "Schedules that avoid this time come first, but sections that overlap it can still show up."}
+          </p>
+          <label className="label flex-row items-center gap-2">
+            <input type="checkbox" checked={block.isEnabled} onChange={(event) => patch(block.id, { isEnabled: event.target.checked })} />
+            Use this blocked time
+          </label>
+          {!block.isEnabled ? <p className="text-sm text-muted">Turned off, it is kept but ignored.</p> : null}
+          <Button variant="ghost" type="button" onClick={() => onChange(blocks.filter((item) => item.id !== block.id))}>
+            Delete blocked time
+          </Button>
+        </div>
+      ))}
+      <Button
+        variant="soft"
+        type="button"
+        onClick={() => onChange([...blocks, { id: newId(), label: "", days: 0, start: 17 * 60, end: 19 * 60, strength: "required", isEnabled: true }])}
+      >
+        Add blocked time
+      </Button>
+    </div>
+  );
+}
+
+function InstructorNames({
+  label,
+  placeholder,
+  names,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  names: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  return (
+    <div className="grid gap-1">
+      <span className="label">{label}</span>
+      {names.length ? (
+        <div className="flex flex-wrap gap-1">
+          {names.map((name) => (
+            <button key={name} className="chip" type="button" onClick={() => onChange(names.filter((item) => item !== name))}>
+              {name} ×
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <TextInput
+        aria-label={label}
+        value={draft}
+        placeholder={placeholder}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const name = draft.trim();
+          if (!name || names.some((item) => item.toLowerCase() === name.toLowerCase())) return;
+          onChange([...names, name]);
+          setDraft("");
+        }}
+      />
+    </div>
+  );
+}
+
 async function shareImage(
   sections: CourseSection[],
   title: string,
@@ -568,6 +758,7 @@ async function shareImage(
   startHour: number,
   endHour: number,
   weekends: boolean,
+  blocked: BlockedTime[] = [],
 ) {
   const days = weekends ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
   const width = 120 + days.length * 160;
@@ -593,6 +784,22 @@ async function shareImage(
     ctx.fillStyle = "#6e6164";
     ctx.fillText(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day]!, x, top);
   });
+  for (const block of blocked) {
+    if (!blockedTimeIsValid(block) || !block.isEnabled) continue;
+    for (const day of dayIndices(block.days)) {
+      const column = days.indexOf(day);
+      if (column < 0) continue;
+      const x = 70 + column * 160;
+      const y = top + 8 + ((block.start - startHour * 60) / span) * ((endHour - startHour) * 36);
+      const h = Math.max(18, ((block.end - block.start) / span) * ((endHour - startHour) * 36));
+      ctx.fillStyle = "#6e6164";
+      ctx.globalAlpha = 0.22;
+      ctx.fillRect(x, y, 150, h);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#3d3336";
+      ctx.fillText(block.label.trim() || "Blocked", x + 6, y + 14);
+    }
+  }
   for (const section of sections) {
     const color = courseColorAt(colorFor(section));
     for (const meeting of section.meetings) {

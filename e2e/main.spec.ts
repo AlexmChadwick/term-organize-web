@@ -98,9 +98,11 @@ test("degree plan PDF round-trip and a catalog audit", async ({ page }) => {
 
   await page.getByRole("button", { name: "Load programs" }).click();
   await page.getByRole("button", { name: "Computer Science, BSCS" }).click();
-  await expect(page.getByText("Computer Science, BSCS (Boston)").or(page.getByText("Computer Science, BSCS"))).toBeVisible();
-  await expect(page.getByText("Algorithms and Data").or(page.getByText("CS 3000"))).toBeVisible();
-  await expect(page.locator("li").filter({ hasText: /complete|partial|missing|planned/ }).first()).toBeVisible();
+  await expect(page.getByText("Reading Computer Science, BSCS…")).toHaveCount(0);
+  const requirement = page.locator("li").filter({ hasText: "CS 4500" });
+  await expect(requirement.first()).toBeVisible();
+  await expect(requirement.filter({ hasText: /complete|partial|missing|planned/ }).first()).toBeVisible();
+  await expect(page.locator("li").filter({ hasText: "CS 3000" }).filter({ hasText: /complete|partial|missing|planned/ }).first()).toBeVisible();
 });
 
 test("degree plan, professors, and the watchlist", async ({ page }) => {

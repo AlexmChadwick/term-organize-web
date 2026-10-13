@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui";
 import type { CatalogIndex } from "@/lib/catalog-index";
+import { loadCourseFacts, snapshotCourseFacts, withTimeout } from "@/lib/plan-course-info";
 import { loadSemesterMoves, type MoveOption } from "@/lib/semester-moves";
 import type { CourseKey } from "@/lib/models";
 import { keyId } from "@/lib/models";
@@ -30,15 +31,22 @@ export function SemesterMoves({
     if (!blockingKey) return;
     let cancelled = false;
     setPhase("loading");
+    const keys = [
+      ...blocking,
+      ...plan.completed.flatMap((course) => (course.key ? [course.key] : [])),
+      ...plan.terms.flatMap((term) => term.courses.flatMap((course) => (course.key ? [course.key] : []))),
+    ];
+    const factsPromise = withTimeout(loadCourseFacts({ keys, attributes: false, suggest: false, plan }), 30_000, snapshotCourseFacts());
     void loadSemesterMoves({
       plan,
       termID,
       blocking,
-      prerequisites: (key) => {
+      prerequisites: factsPromise.then((facts) => (key) => {
         const course = index?.course(key);
         if (course?.detailsLoaded) return course.prereqs ?? null;
-        return undefined;
-      },
+        return facts.requisite(key);
+      }),
+      equivalences: factsPromise.then((facts) => facts.equivalences),
     }).then((result) => {
       if (cancelled) return;
       setOptions(result.options);

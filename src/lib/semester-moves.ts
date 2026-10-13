@@ -15,6 +15,7 @@ import {
   type PrerequisiteLookup,
   type ReorderSuggestion,
 } from "@/lib/degree/reordering";
+import { CourseEquivalences } from "@/lib/equivalences";
 import type { CourseKey } from "@/lib/models";
 import { keyId } from "@/lib/models";
 import { sortPlanTerms, type DegreePlan, type DegreePlanTerm } from "@/lib/requirements";
@@ -85,7 +86,8 @@ export async function loadSemesterMoves(options: {
   plan: DegreePlan;
   termID: string;
   blocking: readonly CourseKey[];
-  prerequisites: PrerequisiteLookup;
+  prerequisites: PrerequisiteLookup | Promise<PrerequisiteLookup>;
+  equivalences?: CourseEquivalences | Promise<CourseEquivalences>;
 }): Promise<{ options: MoveOption[]; historyKnown: boolean }> {
   const plan = structuredClone(options.plan);
   sortPlanTerms(plan);
@@ -96,7 +98,13 @@ export async function loadSemesterMoves(options: {
   const candidates = options.blocking.filter((key) => inSemester.has(keyId(key)));
   if (!candidates.length) return { options: [], historyKnown: true };
 
-  let history = await fetchOfferingHistory(candidates);
+  const historyPromise = fetchOfferingHistory(candidates);
+  const [prerequisites, equivalences, historyStart] = await Promise.all([
+    Promise.resolve(options.prerequisites),
+    Promise.resolve(options.equivalences ?? CourseEquivalences.none()),
+    historyPromise,
+  ]);
+  let history = historyStart;
   const later = plan.terms.slice(originIndex + 1).flatMap((term) => term.courses.flatMap((course) => (course.key ? [course.key] : [])));
   const ask = (known: OfferingHistory) =>
     reorderSuggestions({
@@ -104,7 +112,8 @@ export async function loadSemesterMoves(options: {
       termID: options.termID,
       blocking: candidates,
       history: known,
-      prerequisites: options.prerequisites,
+      prerequisites,
+      equivalences,
     });
   let found = ask(history);
   if (found.some((suggestion) => suggestion.moves.length === 1)) found = found.filter((suggestion) => suggestion.moves.length === 1);

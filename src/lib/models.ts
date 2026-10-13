@@ -644,6 +644,20 @@ export function termCalendarYear(code: string): number {
   return termSeason(code) === "fall" ? year - 1 : year;
 }
 
+const SEASON_LABEL: Record<Season, string> = {
+  fall: "Fall",
+  winter: "Winter",
+  spring: "Spring",
+  summer1: "Summer 1",
+  summerFull: "Summer",
+  summer2: "Summer 2",
+};
+
+/** `Spring 2025`, `Summer 1 2025`, `Fall 2024`. Port of `OfferingHistory.label(ofTerm:)`. */
+export function offeringTermLabel(code: string): string {
+  return `${SEASON_LABEL[termSeason(code)]} ${termCalendarYear(code)}`;
+}
+
 /** UTC milliseconds for a wall-clock time in America/New_York. */
 export function newYorkEpochMs(year: number, month: number, day: number, hour = 0, minute = 0, second = 0): number {
   const guess = Date.UTC(year, month - 1, day, hour, minute, second);

@@ -29,7 +29,8 @@ interface PdfjsModule {
 export async function textFromPDF(data: ArrayBuffer | Uint8Array): Promise<string> {
   const pdfjs = await loadPdfjs();
   const bytes = data instanceof Uint8Array ? new Uint8Array(data) : new Uint8Array(data);
-  const standardFontDataUrl = typeof window === "undefined" ? `${process.cwd()}/node_modules/pdfjs-dist/standard_fonts/` : undefined;
+  const standardFontDataUrl =
+    typeof window === "undefined" ? `${process.cwd()}/node_modules/pdfjs-dist/standard_fonts/` : `${window.location.origin}/standard_fonts/`;
   const doc = await pdfjs.getDocument({ data: bytes, standardFontDataUrl }).promise;
   try {
     const pages: string[] = [];

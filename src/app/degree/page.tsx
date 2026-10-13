@@ -5,14 +5,16 @@ import type { CatalogIndex } from "@/lib/catalog-index";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, Select, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
-import { ruleResults, runDegreeAudit } from "@/lib/degree/audit";
+import { degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide, programURL, programsFromIndex, universitywideLink } from "@/lib/degree/catalog-parser";
 import { courseAttributes } from "@/lib/degree/nupath";
+import { declareEquivalence, planCourseKeys, unorderedPairId, type DegreeEquivalencePrompt } from "@/lib/degree/suggestions";
+import { convertRenumbering, coursesToLookUpForRenumbering, likelyRenumberings, type LikelyRenumbering } from "@/lib/degree/substitutions";
 import { duplicateKeys, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
-import { equivalencesFromDeclarations } from "@/lib/equivalences";
 import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
+import { promptsForPlan, useCourseFacts, type CourseFactsSnapshot } from "@/lib/plan-course-info";
 import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
 import { catalogYearLabel, completedCredits, concentrationName, editionsAll, estimatedEditions, plannedCredits, type CatalogProgram, type CatalogYear, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm, type PlanSeason, type ProgramRequirements, PLAN_SEASON_SHORT } from "@/lib/requirements";
 import { keepOnePrimaryDegree, newId } from "@/lib/user";
@@ -52,11 +54,10 @@ export default function DegreePage() {
 
   async function onFile(file: File) {
     try {
-      let text = await file.text();
-      if (file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf") {
-        const { textFromPDF } = await import("@/lib/pdf-text");
-        text = await textFromPDF(await file.arrayBuffer());
-      }
+      const bytes = await file.arrayBuffer();
+      const header = new TextDecoder().decode(bytes.slice(0, 5));
+      const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf" || header.startsWith("%PDF");
+      const text = isPdf ? await (await import("@/lib/pdf-text")).textFromPDF(bytes) : new TextDecoder().decode(bytes);
       const parsed = parseDegreePlanText(text, file.name);
       parsed.plan.isPrimary = true;
       updateUser((prev) => ({ ...prev, degreePlans: keepOnePrimaryDegree([...prev.degreePlans, parsed.plan], parsed.plan.id) }));
@@ -67,19 +68,81 @@ export default function DegreePage() {
   }
 
   const duplicates = plan ? duplicateKeys(plan) : new Set<string>();
+  const alsoComparing = useMemo(() => {
+    const titles = requirements?.courseTitles ?? {};
+    return Object.keys(titles).flatMap((code) => {
+      const key = parseCourseKey(code);
+      return key ? [key] : [];
+    });
+  }, [requirements]);
+  const coreRequest = useMemo(() => {
+    if (!plan) return null;
+    const keys = planCourseKeys(plan);
+    const seen = new Set(keys.map((key) => keyId(key)));
+    for (const key of coursesToLookUpForRenumbering(plan, requirements)) {
+      const id = keyId(key);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      keys.push(key);
+    }
+    return {
+      keys,
+      attributes: true,
+      suggest: true,
+      plan,
+      catalogTitles: requirements?.courseTitles ?? {},
+      alsoComparing,
+    };
+  }, [plan, requirements, alsoComparing]);
+  const core = useCourseFacts(coreRequest);
   const audit = useMemo(() => {
     if (!plan || !requirements) return null;
-    const table: Record<string, string[]> = {};
-    if (index) {
-      const keys = [...plan.completed, ...plan.terms.flatMap((term) => term.courses)];
-      for (const course of keys) {
-        if (!course.key) continue;
-        const listed = index.course(course.key);
-        if (listed) table[keyId(course.key)] = listed.attributes;
-      }
-    }
-    return runDegreeAudit(plan, requirements, equivalencesFromDeclarations(plan.courseEquivalences), courseAttributes(table));
-  }, [plan, requirements, index]);
+    return runDegreeAudit(plan, requirements, core.equivalences, attributesFor(plan, index, core));
+  }, [plan, requirements, index, core]);
+  const listed = useMemo(() => {
+    if (!plan || !audit || !index) return [] as CourseKey[];
+    return degreeOpenListedCourses(audit, plan).filter((key) => index.course(key) == null);
+  }, [plan, audit, index]);
+  const listedRequest = useMemo(() => {
+    if (!plan || listed.length === 0) return null;
+    return { keys: listed, attributes: false, suggest: true, plan, catalogTitles: requirements?.courseTitles ?? {}, alsoComparing };
+  }, [plan, listed, requirements, alsoComparing]);
+  const extra = useCourseFacts(listedRequest);
+  const prompts = useMemo(() => {
+    if (!plan) return null;
+    return promptsForPlan({
+      plan,
+      listed,
+      dismissed: new Set([...core.dismissed, ...extra.dismissed]),
+      suggestions: (key) => {
+        const fromListed = extra.suggestions(key);
+        return fromListed.length > 0 ? fromListed : core.suggestions(key);
+      },
+    });
+  }, [plan, listed, core, extra]);
+  const renumberings = useMemo(() => {
+    if (!plan) return [] as LikelyRenumbering[];
+    return likelyRenumberings(plan, requirements, (key) => core.isRetired(key)).filter(
+      (item) => !core.dismissed.has(unorderedPairId(item.course, item.countsAs)),
+    );
+  }, [plan, requirements, core]);
+
+  function confirmEquivalence(prompt: DegreeEquivalencePrompt) {
+    if (!plan) return;
+    const next = structuredClone(plan);
+    if (!declareEquivalence(next, prompt.course, prompt.countsAs)) return;
+    save(next);
+    setNotice(`${keyId(prompt.course)} now counts as ${keyId(prompt.countsAs)}`);
+  }
+
+  function confirmRenumbering(item: LikelyRenumbering) {
+    if (!plan) return;
+    const next = structuredClone(plan);
+    const change = convertRenumbering(next, item.substitution, requirements);
+    if (!change) return;
+    save(next);
+    setNotice(change.message);
+  }
 
   const visiblePrograms = programs.filter((program) => program.title.toLowerCase().includes(programQuery.toLowerCase())).slice(0, 40);
 
@@ -149,8 +212,15 @@ export default function DegreePage() {
             save({ ...plan, terms: draft.terms, updatedAt: Date.now() });
             setNotice("Added courses from your primary schedules into matching semesters.");
           }}
-          lookupPrereq={(key, termIndex) => prerequisiteStatus(key, termIndex, plan, index)}
+          lookupPrereq={(key, termIndex) => prerequisiteStatus(key, termIndex, plan, index, core.requisite, core.equivalences)}
           index={index}
+          prompts={prompts?.forPlanCourses ?? []}
+          retiredNote={(key) => core.retiredNote(key) ?? extra.retiredNote(key)}
+          onConfirmEquivalence={confirmEquivalence}
+          onDismissEquivalence={(prompt) => {
+            core.dismiss(prompt.course, prompt.countsAs);
+            extra.dismiss(prompt.course, prompt.countsAs);
+          }}
           onMove={(option) => {
             const next = applyMoveToPlan(option.suggestion, plan);
             if (JSON.stringify(next.terms) === JSON.stringify(plan.terms)) {
@@ -307,7 +377,27 @@ export default function DegreePage() {
             ) : (
               <p className="text-sm text-muted">Open or import a plan to run the audit.</p>
             )}
-            {plan && requirements ? <SubstitutionForm plan={plan} requirements={requirements} onChange={save} /> : null}
+            {prompts
+              ? listed.flatMap((key) => {
+                  const prompt = prompts.forListed(key);
+                  return prompt ? [prompt] : [];
+                }).filter((prompt, position, all) => all.findIndex((item) => item.id === prompt.id) === position).map((prompt) => (
+                  <EquivalencePrompt key={prompt.id} prompt={prompt} onConfirm={confirmEquivalence} onDismiss={(item) => { core.dismiss(item.course, item.countsAs); extra.dismiss(item.course, item.countsAs); }} />
+                ))
+              : null}
+            {plan && requirements ? (
+              <SubstitutionForm
+                plan={plan}
+                requirements={requirements}
+                onChange={save}
+                renumberings={renumberings}
+                onRenumber={confirmRenumbering}
+                onKeepSubstitution={(item) => {
+                  core.dismiss(item.course, item.countsAs);
+                  extra.dismiss(item.course, item.countsAs);
+                }}
+              />
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -327,6 +417,10 @@ function PlanEditor({
   lookupPrereq,
   index,
   onMove,
+  prompts,
+  retiredNote,
+  onConfirmEquivalence,
+  onDismissEquivalence,
 }: {
   plan: DegreePlan;
   duplicates: Set<string>;
@@ -339,6 +433,10 @@ function PlanEditor({
   lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number) => { kind: string; text?: string };
   index: CatalogIndex | null;
   onMove: (option: MoveOption) => void;
+  prompts: DegreeEquivalencePrompt[];
+  retiredNote: (key: CourseKey) => string | null;
+  onConfirmEquivalence: (prompt: DegreeEquivalencePrompt) => void;
+  onDismissEquivalence: (prompt: DegreeEquivalencePrompt) => void;
 }) {
   const [draft, setDraft] = useState("CS 3000");
   const total = completedCredits(plan) + plannedCredits(plan);
@@ -394,9 +492,17 @@ function PlanEditor({
           Add semester
         </Button>
       </div>
+      {prompts.length ? (
+        <div className="grid gap-2">
+          <h3 className="font-semibold">Course equivalences</h3>
+          {prompts.map((prompt) => (
+            <EquivalencePrompt key={prompt.id} prompt={prompt} onConfirm={onConfirmEquivalence} onDismiss={onDismissEquivalence} />
+          ))}
+        </div>
+      ) : null}
       <div>
         <h3 className="font-semibold">Completed</h3>
-        <CourseList courses={plan.completed} termCode={termCode} onChange={(courses) => onChange({ ...plan, completed: courses })} />
+        <CourseList courses={plan.completed} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
       </div>
       {plan.terms.map((term, termIndex) => (
         <div key={term.id} className="rounded-2xl border border-line p-3">
@@ -417,7 +523,7 @@ function PlanEditor({
               Remove semester
             </Button>
           </div>
-          <CourseList courses={term.courses} termCode={termCode} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
+          <CourseList courses={term.courses} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
@@ -458,7 +564,7 @@ function blockingCourses(
   return keys;
 }
 
-function CourseList({ courses, onChange, termCode }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string }) {
+function CourseList({ courses, onChange, termCode, retiredNote }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string; retiredNote: (key: CourseKey) => string | null }) {
   if (!courses.length) return <p className="mt-2 text-sm text-muted">None yet.</p>;
   return (
     <ul className="mt-2 grid gap-2">
@@ -471,6 +577,7 @@ function CourseList({ courses, onChange, termCode }: { courses: DegreePlanCourse
           ) : (
             <span className="font-semibold">{course.label}</span>
           )}
+          {course.key && retiredNote(course.key) ? <span className="text-muted">{retiredNote(course.key)}</span> : null}
           <TextInput className="max-w-[220px] py-1" value={course.title} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, title: event.target.value } : item)))} />
           <TextInput className="w-20 py-1" value={String(course.credits)} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, credits: Number(event.target.value) || 0 } : item)))} />
           <button type="button" className="text-muted" onClick={() => onChange(courses.filter((item) => item.id !== course.id))}>
@@ -482,7 +589,21 @@ function CourseList({ courses, onChange, termCode }: { courses: DegreePlanCourse
   );
 }
 
-function SubstitutionForm({ plan, requirements, onChange }: { plan: DegreePlan; requirements: ProgramRequirements; onChange: (plan: DegreePlan) => void }) {
+function SubstitutionForm({
+  plan,
+  requirements,
+  onChange,
+  renumberings,
+  onRenumber,
+  onKeepSubstitution,
+}: {
+  plan: DegreePlan;
+  requirements: ProgramRequirements;
+  onChange: (plan: DegreePlan) => void;
+  renumberings: LikelyRenumbering[];
+  onRenumber: (item: LikelyRenumbering) => void;
+  onKeepSubstitution: (item: LikelyRenumbering) => void;
+}) {
   const rules = requirements.sections.flatMap((section) => section.groups.flatMap((group) => group.rules));
   const [ruleID, setRuleID] = useState(rules[0]?.id ?? "");
   const [kind, setKind] = useState<"waive" | "countCourse" | "replace">("waive");
@@ -494,6 +615,16 @@ function SubstitutionForm({ plan, requirements, onChange }: { plan: DegreePlan; 
   return (
     <div className="grid gap-3 rounded-2xl border border-line p-3">
       <h3 className="font-semibold">Substitutions, petitions, and waivers</h3>
+      {renumberings.map((item) => (
+        <div key={item.id} className="grid gap-1 rounded-xl border border-line p-3 text-sm">
+          <strong>{item.question}</strong>
+          <p className="text-muted">{item.explanation}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button className="tiny" type="button" onClick={() => onRenumber(item)}>Same course, new number</Button>
+            <Button className="tiny" variant="ghost" type="button" onClick={() => onKeepSubstitution(item)}>Keep as substitution</Button>
+          </div>
+        </div>
+      ))}
       <div className="grid gap-2 md:grid-cols-2">
         <label className="label">
           Requirement
@@ -598,4 +729,55 @@ function SubstitutionForm({ plan, requirements, onChange }: { plan: DegreePlan; 
       </ul>
     </div>
   );
+}
+
+function EquivalencePrompt({
+  prompt,
+  onConfirm,
+  onDismiss,
+}: {
+  prompt: DegreeEquivalencePrompt;
+  onConfirm: (prompt: DegreeEquivalencePrompt) => void;
+  onDismiss: (prompt: DegreeEquivalencePrompt) => void;
+}) {
+  return (
+    <div className="grid gap-1 rounded-xl border border-line p-3 text-sm">
+      <strong>{prompt.question}</strong>
+      {prompt.evidence ? <p className="text-muted">{prompt.evidence}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button className="tiny" type="button" onClick={() => onConfirm(prompt)} aria-label={`Confirm that ${keyId(prompt.course)} counts as ${keyId(prompt.countsAs)}`}>
+          Confirm
+        </Button>
+        <Button className="tiny" variant="ghost" type="button" onClick={() => onDismiss(prompt)} aria-label="Dismiss this suggestion">
+          Dismiss
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function attributesFor(plan: DegreePlan, index: CatalogIndex | null, facts: CourseFactsSnapshot) {
+  const table: Record<string, string[]> = {};
+  const loading: string[] = [];
+  const planIds = new Set(planCourseKeys(plan).map((key) => keyId(key)));
+  const wanted = new Set<string>(planIds);
+  for (const key of planCourseKeys(plan)) {
+    for (const other of facts.equivalences.groupOf(key)) wanted.add(keyId(other));
+  }
+  for (const id of wanted) {
+    const key = parseCourseKey(id);
+    if (!key) continue;
+    const remote = facts.attribute(key);
+    if (remote?.type === "found") {
+      table[id] = remote.codes ?? [];
+      continue;
+    }
+    if (index && index.sectionsOf(key).length > 0) {
+      table[id] = index.course(key)?.attributes ?? [];
+      continue;
+    }
+    const infoState = facts.state(key);
+    if (planIds.has(id) && (infoState === "loading" || infoState === "unknown")) loading.push(id);
+  }
+  return courseAttributes(table, loading);
 }

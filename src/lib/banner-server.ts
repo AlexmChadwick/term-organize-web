@@ -8,12 +8,13 @@
  */
 
 import path from "node:path";
-import { mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
+import { catalogCodesContain, mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parseMutualExclusions, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
 import { listStoredTermCodes, loadBestCatalog, saveBuiltCatalog } from "./catalog-store";
+import type { CourseInfo } from "./course-info";
 import { OfferingHistory } from "./degree/reordering";
 import { decodeEntities } from "./html";
 import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Subject, Term, TermCatalog } from "./models";
-import { keyId, termCollege } from "./models";
+import { HONORS_ATTRIBUTE, keyId, termCollege } from "./models";
 import { OfferingHistoryRepository, type OfferingIndex } from "./offering-history";
 
 const BASE = "https://nubanner.neu.edu/StudentRegistrationSsb/ssb/";
@@ -233,7 +234,94 @@ async function fetchOfferedCourses(term: string, courses: CourseKey[]): Promise<
   return offered;
 }
 
-const offeringRepository = new OfferingHistoryRepository({
+const subjectNames = new Map<string, { code: string; name: string }[]>();
+
+async function subjectsFor(term: string): Promise<{ code: string; name: string }[]> {
+  const cached = subjectNames.get(term);
+  if (cached) return cached;
+  const subjects = await fetchSubjects(term);
+  subjectNames.set(term, subjects);
+  return subjects;
+}
+
+async function postCourseForm(path: string, term: string, course: CourseKey): Promise<string> {
+  const res = await bannerFetch(endpoint(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body: new URLSearchParams({ term, subjectCode: course.subject, courseNumber: course.number }),
+  });
+  return res.text();
+}
+
+/** Whether `term`'s course catalog lists `course`. The typeahead needs no session cookie. */
+export async function catalogLists(course: CourseKey, term: string): Promise<boolean> {
+  const res = await bannerFetch(
+    endpoint("courseSearch/get_subjectcoursecombo", {
+      searchTerm: `${course.subject} ${course.number}`,
+      term,
+      offset: "1",
+      max: "10",
+    }),
+  );
+  const items = (await res.json()) as { code: string; description?: string }[];
+  return catalogCodesContain(items, course);
+}
+
+/**
+ * A course's catalog entry as of `term`: title, credits, prerequisites, corequisites, and
+ * mutual exclusions. Null when that term's catalog does not list the course.
+ */
+export async function fetchCatalogEntry(course: CourseKey, term: string): Promise<CourseInfo | null> {
+  if (!(await catalogLists(course, term))) return null;
+  const [detailsHTML, prerequisitesHTML, corequisitesHTML, exclusionsHTML, subjects] = await Promise.all([
+    postCourseForm("courseSearchResults/getCourseCatalogDetails", term, course),
+    postCourseForm("courseSearchResults/getPrerequisites", term, course),
+    postCourseForm("courseSearchResults/getCorequisites", term, course),
+    postCourseForm("courseSearchResults/getCourseMutuallyExclusions", term, course),
+    subjectsFor(term),
+  ]);
+  const lookup = subjectLookup(subjects);
+  const details = parseCatalogDetails(detailsHTML);
+  return {
+    key: course,
+    title: details.title ?? "",
+    minCredits: details.minCredits ?? null,
+    maxCredits: details.maxCredits ?? null,
+    prerequisites: parsePrerequisites(prerequisitesHTML, lookup),
+    corequisites: parseCorequisites(corequisitesHTML, lookup),
+    equivalents: parseMutualExclusions(exclusionsHTML, lookup),
+    sourceTerm: term,
+    isRetired: null,
+    fetchedAt: Date.now(),
+  };
+}
+
+/** Attribute codes of courses that have sections in `term`. Courses with no sections are omitted. */
+export async function fetchSectionAttributes(term: string, courses: CourseKey[]): Promise<Map<string, Set<string>>> {
+  const result = new Map<string, Set<string>>();
+  if (!courses.length) return result;
+  const cookie = await openSession(term);
+  for (let i = 0; i < courses.length; i++) {
+    if (i > 0) {
+      await bannerFetch(endpoint("classSearch/resetDataForm"), { method: "POST", headers: { Cookie: cookie } });
+    }
+    const key = courses[i]!;
+    const raw = (await searchSections(cookie, term, key.subject, key.number)).filter(
+      (section) => section.subject === key.subject && section.courseNumber === key.number,
+    );
+    if (!raw.length) continue;
+    const codes = new Set<string>();
+    for (const section of raw) {
+      for (const attribute of section.sectionAttributes ?? []) {
+        if (attribute.code && attribute.code !== HONORS_ATTRIBUTE) codes.add(attribute.code);
+      }
+    }
+    result.set(keyId(key), codes);
+  }
+  return result;
+}
+
+export const offeringRepository = new OfferingHistoryRepository({
   fetcher: {
     terms: () => fetchTerms(80),
     offeredCourses: fetchOfferedCourses,
