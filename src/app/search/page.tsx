@@ -202,6 +202,7 @@ function SearchScreen() {
 
       {catalogStatus === "loading" && !index ? <p className="text-muted">Loading the catalog…</p> : null}
       {catalogStatus === "building" ? <p className="text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
+      {catalogStatus === "ready" && catalogDetail ? <p className="text-muted">{catalogDetail}</p> : null}
       {catalogStatus === "error" ? <p className="text-bad">{catalogError ?? "The catalog did not load."}</p> : null}
 
       {!text.trim() && searchFilterCount(filters) === 0 ? (

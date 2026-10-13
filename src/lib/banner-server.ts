@@ -14,7 +14,7 @@ import type { CourseInfo } from "./course-info";
 import { OfferingHistory } from "./degree/reordering";
 import { decodeEntities } from "./html";
 import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Subject, Term, TermCatalog } from "./models";
-import { HONORS_ATTRIBUTE, keyId, termCollege } from "./models";
+import { HONORS_ATTRIBUTE, keyId, recomputePostreqs, termCollege } from "./models";
 import { OfferingHistoryRepository, type OfferingIndex } from "./offering-history";
 
 const BASE = "https://nubanner.neu.edu/StudentRegistrationSsb/ssb/";
@@ -169,34 +169,41 @@ export async function fetchAllSections(term: string, parallelism = 4): Promise<B
   return all;
 }
 
-async function knowledgeFor(termCode: string): Promise<Map<string, Course>> {
-  const knowledge = new Map<string, Course>();
-  for (const code of await listStoredTermCodes()) {
-    if (code === termCode) continue;
-    const catalog = await loadBestCatalog(code);
-    if (!catalog) continue;
-    for (const course of catalog.courses) {
-      const id = keyId(course);
-      if (course.detailsLoaded && !knowledge.has(id)) knowledge.set(id, course);
-    }
-  }
-  return knowledge;
-}
-
 const builds = new Map<string, Promise<TermCatalog>>();
 
-/** Downloads every section of a term and merges it with what is already known. */
-export function buildTermCatalog(termCode: string): Promise<TermCatalog> {
+/**
+ * Downloads every section of a term. Descriptions already stored for this term are kept.
+ * Pass `refreshDetails` to drop them so the next detail pass reads this term's catalog pages.
+ * Other terms' descriptions are not copied in.
+ */
+export function buildTermCatalog(termCode: string, refreshDetails = false): Promise<TermCatalog> {
   const running = builds.get(termCode);
   if (running) return running;
-  const job = buildTermCatalogOnce(termCode).finally(() => {
+  const job = buildTermCatalogOnce(termCode, refreshDetails).finally(() => {
     builds.delete(termCode);
   });
   builds.set(termCode, job);
   return job;
 }
 
-async function buildTermCatalogOnce(termCode: string): Promise<TermCatalog> {
+function clearCourseDetails(catalog: TermCatalog): TermCatalog {
+  return {
+    ...catalog,
+    courses: catalog.courses.map((course) => ({
+      ...course,
+      description: "",
+      prereqs: null,
+      coreqs: null,
+      postreqs: [],
+      college: null,
+      department: null,
+      detailsLoaded: false,
+    })),
+    sections: catalog.sections.map((section) => ({ ...section, description: null, prereqs: null, coreqs: null })),
+  };
+}
+
+async function buildTermCatalogOnce(termCode: string, refreshDetails: boolean): Promise<TermCatalog> {
   const listed = await fetchTerms(80).catch(() => [] as Term[]);
   const term = listed.find((item) => item.code === termCode) ?? { code: termCode, bannerDescription: termCode };
   const [subjects, campuses, attributes] = await Promise.all([
@@ -205,18 +212,113 @@ async function buildTermCatalogOnce(termCode: string): Promise<TermCatalog> {
     fetchAttributes(termCode).catch(() => null as AttributeInfo[] | null),
   ]);
   const sections = await fetchAllSections(termCode);
-  const existing = await loadBestCatalog(termCode);
+  const stored = await loadBestCatalog(termCode);
   const catalog = mergeCatalog({
-    existing,
+    existing: refreshDetails && stored ? clearCourseDetails(stored) : stored,
     fresh: sections,
     term,
     subjects,
     campuses,
     attributes,
-    knowledge: await knowledgeFor(termCode),
   });
   await saveBuiltCatalog(catalog);
   return catalog;
+}
+
+const DETAIL_BATCH = 24;
+const detailQueues = new Map<string, Promise<unknown>>();
+
+function enqueueDetail<T>(termCode: string, job: () => Promise<T>): Promise<T> {
+  const previous = detailQueues.get(termCode) ?? Promise.resolve();
+  const run = previous.then(job, job);
+  detailQueues.set(
+    termCode,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+/** Description, requisites, and catalog title for one section, from this term's Banner pages. */
+async function loadCourseDetailPatch(term: string, crn: string, lookup: ReturnType<typeof subjectLookup>, specialTopics: boolean): Promise<Partial<Course>> {
+  const [descriptionHTML, prereqHTML, coreqHTML, detailsHTML] = await Promise.all([
+    postForm("searchResults/getCourseDescription", term, crn).catch(() => ""),
+    postForm("searchResults/getSectionPrerequisites", term, crn).catch(() => ""),
+    postForm("searchResults/getCorequisites", term, crn).catch(() => ""),
+    postForm("searchResults/getSectionCatalogDetails", term, crn).catch(() => ""),
+  ]);
+  const patch: Partial<Course> = { detailsLoaded: true, description: parseDescription(descriptionHTML) };
+  patch.prereqs = parsePrerequisites(prereqHTML, lookup);
+  patch.coreqs = parseCorequisites(coreqHTML, lookup);
+  const details = parseCatalogDetails(detailsHTML);
+  if (details.title && !specialTopics) patch.title = details.title;
+  if (details.college) patch.college = details.college;
+  if (details.department) patch.department = details.department;
+  if (details.minCredits != null) patch.minCredits = details.minCredits;
+  if (details.maxCredits != null) patch.maxCredits = details.maxCredits;
+  return patch;
+}
+
+async function mapPool<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const item = items[cursor];
+      cursor += 1;
+      if (item !== undefined) await run(item);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+}
+
+/**
+ * Reads this term's own course descriptions from Banner for courses that are still stubs.
+ * One call covers a batch so the request stays short; call again until `remaining` is 0.
+ */
+export function fillTermCourseDetails(termCode: string, limit = DETAIL_BATCH): Promise<{ filled: number; remaining: number; catalog: TermCatalog } | null> {
+  return enqueueDetail(termCode, () => fillTermCourseDetailsOnce(termCode, limit));
+}
+
+async function fillTermCourseDetailsOnce(termCode: string, limit: number): Promise<{ filled: number; remaining: number; catalog: TermCatalog } | null> {
+  const source = await loadBestCatalog(termCode);
+  if (!source) return null;
+  const catalog: TermCatalog = {
+    ...source,
+    courses: source.courses.map((course) => ({ ...course, postreqs: [...course.postreqs] })),
+    sections: source.sections.map((section) => ({ ...section, meetings: section.meetings.map((meeting) => ({ ...meeting })) })),
+  };
+  const pending = catalog.courses.filter((course) => !course.detailsLoaded);
+  const batch = pending.slice(0, Math.max(1, limit));
+  if (!batch.length) return { filled: 0, remaining: 0, catalog };
+  const subjects = catalog.subjects.length ? catalog.subjects : await fetchSubjects(termCode).catch(() => [] as Subject[]);
+  const lookup = subjectLookup(subjects);
+  if (!catalog.subjects.length && subjects.length) catalog.subjects = subjects;
+  await mapPool(batch, 4, async (course) => {
+    const sections = catalog.sections.filter((section) => section.subject === course.subject && section.number === course.number);
+    const crn = sections[0]?.crn;
+    if (!crn) {
+      course.detailsLoaded = true;
+      return;
+    }
+    try {
+      Object.assign(course, await loadCourseDetailPatch(termCode, crn, lookup, course.specialTopics));
+      if (course.specialTopics) {
+        for (const section of sections) {
+          if (section.description != null) continue;
+          const html = await postForm("searchResults/getCourseDescription", termCode, section.crn).catch(() => "");
+          section.description = parseDescription(html);
+        }
+      }
+    } catch {
+      course.detailsLoaded = true;
+    }
+  });
+  recomputePostreqs(catalog);
+  await saveBuiltCatalog(catalog);
+  const remaining = catalog.courses.filter((course) => !course.detailsLoaded).length;
+  return { filled: batch.length, remaining, catalog };
 }
 
 async function fetchOfferedCourses(term: string, courses: CourseKey[]): Promise<CourseKey[]> {
@@ -375,28 +477,14 @@ export async function refreshCourse(term: string, subject: string, number: strin
   const crn = sections[0]?.crn;
   const patch: Partial<Course> = {};
   if (crn) {
-    const [descriptionHTML, prereqHTML, coreqHTML, detailsHTML, facultyRes] = await Promise.all([
-      postForm("searchResults/getCourseDescription", term, crn).catch(() => ""),
-      postForm("searchResults/getSectionPrerequisites", term, crn).catch(() => ""),
-      postForm("searchResults/getCorequisites", term, crn).catch(() => ""),
-      postForm("searchResults/getSectionCatalogDetails", term, crn).catch(() => ""),
+    const [detail, facultyRes] = await Promise.all([
+      loadCourseDetailPatch(term, crn, lookup, false),
       bannerFetch(endpoint("searchResults/getFacultyMeetingTimes", { term, courseReferenceNumber: crn }))
         .then((r) => r.json())
         .catch(() => null),
     ]);
-    const description = parseDescription(descriptionHTML);
-    if (description) patch.description = description;
-    const prereqs = parsePrerequisites(prereqHTML, lookup);
-    const coreqs = parseCorequisites(coreqHTML, lookup);
-    if (prereqs) patch.prereqs = prereqs;
-    if (coreqs) patch.coreqs = coreqs;
-    const details = parseCatalogDetails(detailsHTML);
-    if (details.title) patch.title = details.title;
-    if (details.college) patch.college = details.college;
-    if (details.department) patch.department = details.department;
-    if (details.minCredits != null) patch.minCredits = details.minCredits;
-    if (details.maxCredits != null) patch.maxCredits = details.maxCredits;
-    patch.detailsLoaded = true;
+    Object.assign(patch, detail);
+    if (!patch.description) delete patch.description;
     const faculty = facultyRes as { fmt?: { faculty?: { displayName?: string; emailAddress?: string; primaryIndicator?: boolean }[] }[] } | null;
     if (faculty?.fmt) {
       const seen = new Set<string>();

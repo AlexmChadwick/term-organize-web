@@ -10,12 +10,14 @@ import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
 import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
-import { blockedTimeIsValid, emptyPreferences, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
-import { analyzeEmptyResult, courseInputsFor, explainGeneration, generateSchedules, ScheduleNoResultsText, type ScheduleGenerationResult, type ScheduleNoResults, type ScheduleSortOption } from "@/lib/schedule";
+import { blockedTimeIsValid, emptyPreferences, schedulePreferencesContext, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
+import { ScheduleSurveyExtras } from "@/components/schedule-survey";
+import { generateOffThread } from "@/lib/schedule/generate-client";
+import { courseInputsFor, ScheduleNoResultsText, type ScheduleGenerationResult, type ScheduleNoResults, type ScheduleSortOption } from "@/lib/schedule";
 import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
 import { newId, nextColorIndex } from "@/lib/user";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 export default function SchedulePage() {
   const app = useApp();
@@ -26,6 +28,9 @@ export default function SchedulePage() {
   const [emptyHelp, setEmptyHelp] = useState<ScheduleNoResults | null>(null);
   const [wish, setWish] = useState("");
   const [results, setResults] = useState<ScheduleGenerationResult | null>(null);
+  const [picked, setPicked] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const generation = useRef(0);
   const active = plan;
 
   const suggestions = useMemo(() => {
@@ -83,29 +88,30 @@ export default function SchedulePage() {
   }
 
   function run() {
-    if (!index) return;
+    if (!index || generating) return;
     const target = current();
     const inputs = courseInputsFor(target.courses, {
       course: (key) => index.course(key) ?? null,
       sectionsFor: (key) => index.sectionsOf(key),
     });
-    const generated = generateSchedules(inputs, target.filters, target.preferences ?? emptyPreferences(), sort, {
-      maxResults: 12,
-      maxExhaustiveLeaves: 80_000,
-      maxNodes: 250_000,
-      timeBudget: 0.8,
-      sampleLeaves: 20_000,
-      sampleTimeBudget: 0.25,
-      allowSampling: true,
+    const id = ++generation.current;
+    setGenerating(true);
+    setMessage("Generating schedules…");
+    setEmptyHelp(null);
+    void generateOffThread({
+      courses: inputs,
+      filters: target.filters,
+      preferences: target.preferences ?? emptyPreferences(),
+      sort,
+      termLabel: termName(index.catalog.term),
+    }).then((outcome) => {
+      if (id !== generation.current) return;
+      setResults(outcome.result);
+      setPicked(0);
+      setEmptyHelp(outcome.empty);
+      setMessage(outcome.message);
+      setGenerating(false);
     });
-    setResults(generated);
-    if (generated.schedules.length) {
-      setEmptyHelp(null);
-      setMessage(`${generated.totalFound} schedule${generated.totalFound === 1 ? "" : "s"} fit.`);
-      return;
-    }
-    setEmptyHelp(analyzeEmptyResult(inputs, target.filters, target.preferences ?? emptyPreferences(), generated.diagnostics));
-    setMessage(explainGeneration(generated, termName(index.catalog.term)));
   }
 
   if (!index) {
@@ -385,6 +391,24 @@ export default function SchedulePage() {
                 Done by
                 <input className="field" type="time" value={minutesToTime(prefs.latestEnd?.minutes)} onChange={(event) => setLimit("latestEnd", event.target.value)} />
               </label>
+              {prefs.earliestStart ? (
+                <label className="label">
+                  Early classes
+                  <select className="select" value={prefs.earliestStart.strength} onChange={(event) => setLimitStrength("earliestStart", event.target.value as "preferred" | "required")}>
+                    <option value="required">Always</option>
+                    <option value="preferred">If possible</option>
+                  </select>
+                </label>
+              ) : null}
+              {prefs.latestEnd ? (
+                <label className="label">
+                  Late classes
+                  <select className="select" value={prefs.latestEnd.strength} onChange={(event) => setLimitStrength("latestEnd", event.target.value as "preferred" | "required")}>
+                    <option value="required">Always</option>
+                    <option value="preferred">If possible</option>
+                  </select>
+                </label>
+              ) : null}
               <label className="label">
                 Format
                 <select className="select" value={prefs.format} onChange={(event) => updatePlan(current().id, (item) => ({ ...item, preferences: { ...(item.preferences ?? emptyPreferences()), format: event.target.value as typeof prefs.format } }))}>
@@ -474,49 +498,31 @@ export default function SchedulePage() {
                 );
               })}
             </div>
+            <ScheduleSurveyExtras
+              prefs={prefs}
+              credits={schedulePreferencesContext(active ?? { courses: [] }, index)}
+              onChange={(preferences) => updatePlan(current().id, (item) => ({ ...item, preferences }))}
+            />
             <label className="label flex-row items-center gap-2">
               <input type="checkbox" checked={active?.filters.hideFullSections ?? false} onChange={(event) => updatePlan(current().id, (item) => ({ ...item, filters: { ...item.filters, hideFullSections: event.target.checked } }))} />
               Hide full sections
             </label>
-            <Button type="button" onClick={run}>
-              Generate schedules
+            <Button type="button" onClick={run} disabled={generating}>
+              {generating ? "Generating schedules…" : "Generate schedules"}
             </Button>
             {message ? <p className="text-sm text-muted">{message}</p> : null}
             {emptyHelp && results && results.schedules.length === 0 ? (
               <EmptyGeneration help={emptyHelp} termLabel={termName(index.catalog.term)} onOptional={makeOptional} degree={degreePlan} semesterID={matchingSemester?.id ?? null} index={index} onMove={applyScheduleMove} />
             ) : null}
-            <ul className="grid gap-2">
-              {results?.schedules.map((schedule, rank) => (
-                <li key={schedule.id} className="rounded-2xl border border-line p-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <strong>Option {rank + 1}</strong>
-                    <span className="text-sm text-muted">
-                      score {Math.round(schedule.score)} · {schedule.classDays} days · {schedule.minSeats} min seats
-                    </span>
-                  </div>
-                  <ul className="mt-1 text-sm">
-                    {schedule.reasons.map((reason) => (
-                      <li key={reason.text} className={reason.kind === "caveat" ? "text-warn" : "text-good"}>
-                        {reason.text}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-1 text-sm text-muted">{schedule.sections.map((section) => `${section.subject} ${section.number} ${section.crn}`).join(" · ")}</p>
-                  <div className="mt-2 flex gap-2">
-                    <Button
-                      className="tiny"
-                      type="button"
-                      onClick={() => updatePlan(current().id, (item) => ({ ...item, selectedCRNs: schedule.crns }))}
-                    >
-                      Use this week
-                    </Button>
-                    <Button className="tiny" variant="ghost" type="button" onClick={() => copyCrns(schedule.sections)}>
-                      Copy CRNs
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            {results && results.schedules.length ? (
+              <ScheduleOption
+                schedule={results.schedules[Math.min(picked, results.schedules.length - 1)]!}
+                rank={Math.min(picked, results.schedules.length - 1)}
+                total={results.schedules.length}
+                onPick={setPicked}
+                onUse={(crns) => updatePlan(current().id, (item) => ({ ...item, selectedCRNs: crns }))}
+              />
+            ) : null}
           </section>
         </div>
       </div>
@@ -532,13 +538,72 @@ export default function SchedulePage() {
     });
   }
 
+  function setLimitStrength(field: "earliestStart" | "latestEnd", strength: "preferred" | "required") {
+    updatePlan(current().id, (item) => {
+      const base = item.preferences ?? emptyPreferences();
+      const limit = base[field];
+      if (!limit) return item;
+      return { ...item, preferences: { ...base, [field]: { ...limit, strength } } };
+    });
+  }
+
   function setLimit(field: "earliestStart" | "latestEnd", value: string) {
     updatePlan(current().id, (item) => {
       const base = item.preferences ?? emptyPreferences();
       const minutes = timeToMinutes(value);
-      return { ...item, preferences: { ...base, [field]: minutes == null ? null : { minutes, strength: "required" as const } } };
+      const previous = base[field];
+      return { ...item, preferences: { ...base, [field]: minutes == null ? null : { minutes, strength: previous?.strength ?? "required" } } };
     });
   }
+}
+
+function ScheduleOption({
+  schedule,
+  rank,
+  total,
+  onPick,
+  onUse,
+}: {
+  schedule: ScheduleGenerationResult["schedules"][number];
+  rank: number;
+  total: number;
+  onPick: (index: number) => void;
+  onUse: (crns: string[]) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-line p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <strong>
+          Option {rank + 1} of {total}
+        </strong>
+        <span className="text-sm text-muted">
+          score {Math.round(schedule.score)} · {schedule.classDays} days · {schedule.minSeats} min seats
+        </span>
+      </div>
+      <ul className="mt-1 text-sm">
+        {schedule.reasons.map((reason) => (
+          <li key={reason.text} className={reason.kind === "caveat" ? "text-warn" : "text-good"}>
+            {reason.text}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-sm text-muted">{schedule.sections.map((section) => `${section.subject} ${section.number} ${section.crn}`).join(" · ")}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button className="tiny" type="button" onClick={() => onPick(Math.max(0, rank - 1))} disabled={rank === 0}>
+          Previous
+        </Button>
+        <Button className="tiny" type="button" onClick={() => onPick(Math.min(total - 1, rank + 1))} disabled={rank >= total - 1}>
+          Next
+        </Button>
+        <Button className="tiny" type="button" onClick={() => onUse(schedule.crns)}>
+          Use this week
+        </Button>
+        <Button className="tiny" variant="ghost" type="button" onClick={() => copyCrns(schedule.sections)}>
+          Copy CRNs
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function EmptyGeneration({

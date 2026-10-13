@@ -4,12 +4,23 @@ import { courseHref, sectionHref, SeatText } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { keyId } from "@/lib/models";
+import { disableClosedAlerts, enableClosedAlerts, pushConfigured } from "@/lib/push-client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function WatchlistPage() {
   const { user, updateUser, unwatch, refreshWatchlist, termCode } = useApp();
   const [status, setStatus] = useState<string | null>(null);
+  const [pushReady, setPushReady] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
+  useEffect(() => {
+    void pushConfigured().then(setPushReady);
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    void navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => setSubscribed(!!subscription))
+      .catch(() => setSubscribed(false));
+  }, []);
   const items = user.watchlist.filter((item) => item.termCode === termCode);
   const others = user.watchlist.filter((item) => item.termCode !== termCode);
 
@@ -19,7 +30,7 @@ export default function WatchlistPage() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Seat alerts</h1>
           <p className="max-w-xl text-muted">
-            While this tab is open, watched sections refresh on a timer. If you allow notifications, a seat or waitlist opening posts a browser notification. A closed tab cannot poll Banner; that needs the iOS app.
+            While this tab is open, watched sections refresh on a timer. With Web Push configured, the same alert can arrive after you close the browser.
           </p>
         </div>
         <Button
@@ -50,6 +61,39 @@ export default function WatchlistPage() {
         />
         Browser notifications
       </label>
+      <label className="label flex-row items-center gap-2">
+        <input
+          type="checkbox"
+          checked={subscribed}
+          disabled={!pushReady}
+          onChange={(event) => {
+            const enabled = event.target.checked;
+            if (!enabled) {
+              updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, backgroundRefreshEnabled: false } }));
+              setSubscribed(false);
+              void disableClosedAlerts();
+              setStatus("Closed-browser alerts are off.");
+              return;
+            }
+            setStatus("Asking this browser for push…");
+            void enableClosedAlerts(user.watchlist, user.preferences.watchlistIntervalMinutes).then((error) => {
+              if (error) {
+                setStatus(error);
+                return;
+              }
+              setSubscribed(true);
+              updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, backgroundRefreshEnabled: true, notificationsEnabled: true } }));
+              setStatus("This browser will get a seat alert even when it is closed.");
+            });
+          }}
+        />
+        Also alert when this browser is closed
+      </label>
+      {!pushReady ? (
+        <p className="text-sm text-muted">
+          Closed-browser alerts need VAPID keys on the server. Generate a pair with <code>npx web-push generate-vapid-keys</code> and set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT. See the README.
+        </p>
+      ) : null}
       {!items.length && !others.length ? <p className="text-muted">Open a section and choose Watch seats. Full sections are the useful ones.</p> : null}
       <ul className="grid gap-2">
         {items.map((item) => (

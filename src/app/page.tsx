@@ -41,6 +41,7 @@ export default function HomePage() {
         </form>
         {catalogStatus === "loading" && !index ? <p className="mt-3 text-sm text-muted">Loading the catalog…</p> : null}
         {catalogStatus === "building" ? <p className="mt-3 text-sm text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
+        {catalogStatus === "ready" && catalogDetail ? <p className="mt-3 text-sm text-muted">{catalogDetail}</p> : null}
         {catalogStatus === "error" ? <p className="mt-3 text-sm text-bad">{catalogError ?? "The catalog did not load. Refresh the page."}</p> : null}
       </section>
 
@@ -50,7 +51,7 @@ export default function HomePage() {
           <ul className="mt-2 grid gap-1 text-sm text-muted">
             <li>Unofficial tool. It reads public Banner and catalog pages. It cannot enroll you.</li>
             <li>Schedules, plans, and seat alerts stay in this browser until you export them.</li>
-            <li>Fall 2026 is already downloaded. Any other term Banner lists is fetched the first time you open it.</li>
+            <li>Fall 2026 is already downloaded. Any other term Banner lists is fetched the first time you open it, including that term’s own course descriptions.</li>
           </ul>
           <button className="btn mt-4" type="button" onClick={() => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, hasCompletedOnboarding: true } }))}>
             Got it
@@ -93,7 +94,7 @@ export default function HomePage() {
           ) : (
             <p className="mt-2 text-sm text-muted">No courses in the primary plan for this term yet.</p>
           )}
-          <p className="mt-3 text-sm text-muted">{user.watchlist.length ? `${user.watchlist.length} section${user.watchlist.length === 1 ? "" : "s"} on the seat watch.` : "Seat alerts refresh while this tab is open."}</p>
+          <p className="mt-3 text-sm text-muted">{user.watchlist.length ? `${user.watchlist.length} section${user.watchlist.length === 1 ? "" : "s"} on the seat watch.` : "Seat alerts can refresh while this tab is open, or by Web Push after you close it."}</p>
         </section>
         <section className="card p-5">
           <h2 className="font-semibold">Saved</h2>

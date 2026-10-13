@@ -19,8 +19,13 @@ import {
   type UserData,
   type WatchItem,
 } from "@/lib/user";
+import { syncClosedAlerts } from "@/lib/push-client";
 import { compareWatchlist } from "@/lib/watchlist";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+function missingDetails(catalog: TermCatalog): boolean {
+  return catalog.courses.some((course) => !course.detailsLoaded);
+}
 
 /* eslint-disable react-hooks/exhaustive-deps -- setUser is a stable wrapper around useState. */
 
@@ -128,6 +133,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveUserData(user);
   }, [user, ready]);
 
+  async function fillDescriptions(code: string, isCancelled: () => boolean) {
+    let previous = Number.POSITIVE_INFINITY;
+    for (let guard = 0; guard < 400; guard += 1) {
+      if (isCancelled()) return;
+      const res = await fetch(`/api/catalog/${code}/details`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; remaining?: number; catalog?: TermCatalog };
+      if (isCancelled()) return;
+      if (!res.ok || !body.catalog) {
+        setCatalogDetail(body.error ?? "Could not load this term's course descriptions.");
+        return;
+      }
+      await idbSetCatalog(code, body.catalog);
+      if (isCancelled()) return;
+      setIndex(CatalogIndex.build(body.catalog));
+      const remaining = body.remaining ?? 0;
+      if (remaining <= 0) {
+        setCatalogDetail(null);
+        return;
+      }
+      if (remaining >= previous) {
+        setCatalogDetail("Some course descriptions could not be read from Banner.");
+        return;
+      }
+      previous = remaining;
+      setCatalogDetail(`Loading this term's course descriptions from Banner… ${remaining} left`);
+    }
+  }
+
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
@@ -154,9 +187,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setIndex(CatalogIndex.build(remote));
           setCatalogStatus("ready");
           void idbSetCatalog(termCode, remote);
+          if (missingDetails(remote)) void fillDescriptions(termCode, cancelledCheck);
           return;
         }
-        if (cached || remote) return;
+        const shown = remote ?? cached;
+        if (shown) {
+          if (missingDetails(shown)) void fillDescriptions(termCode, cancelledCheck);
+          return;
+        }
         await installBuiltCatalog(termCode, cancelledCheck);
       } catch (error) {
         if (cancelled) return;
@@ -180,6 +218,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setIndex(CatalogIndex.build(body));
         setCatalogStatus("ready");
         setCatalogDetail(null);
+        if (missingDetails(body)) void fillDescriptions(code, isCancelled);
       }
     })();
     return () => {
@@ -227,13 +266,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCatalogDetail("Downloading every section of this term from Banner…");
     setCatalogError(null);
     try {
-      const res = await fetch(`/api/catalog/${termCode}`, { method: "POST" });
+      const res = await fetch(`/api/catalog/${termCode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshDetails: true }),
+      });
       const body = (await res.json().catch(() => ({}))) as TermCatalog & { error?: string };
       if (!res.ok) throw new Error(body.error ?? "Couldn't download that term.");
       await idbSetCatalog(termCode, body);
       setIndex(CatalogIndex.build(body));
       setCatalogStatus("ready");
       setCatalogDetail(null);
+      if (missingDetails(body)) void fillDescriptions(termCode, () => false);
     } catch (error) {
       setCatalogStatus("error");
       setCatalogError(error instanceof Error ? error.message : "Couldn't download that term.");
@@ -414,6 +458,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, minutes * 60_000);
     return () => window.clearInterval(id);
   }, [ready, user.preferences.autoRefreshSeats, user.preferences.watchlistIntervalMinutes, user.watchlist.length, refreshWatchlist]);
+
+  useEffect(() => {
+    if (!ready || !user.preferences.backgroundRefreshEnabled) return;
+    void syncClosedAlerts(user.watchlist, user.preferences.watchlistIntervalMinutes);
+  }, [ready, user.preferences.backgroundRefreshEnabled, user.preferences.watchlistIntervalMinutes, user.watchlist]);
 
   const value: AppContextValue = {
     ready,

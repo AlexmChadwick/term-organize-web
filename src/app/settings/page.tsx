@@ -65,14 +65,14 @@ export default function SettingsPage() {
             onChange={(event) => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, watchlistIntervalMinutes: Math.min(120, Math.max(1, Number(event.target.value) || 15)) } }))}
           />
         </label>
-        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Fall 2026 ships with the site. Any other term is downloaded from Banner the first time you open it, then kept in this browser.</p>
+        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Fall 2026 ships with the site. Any other term is downloaded from Banner the first time you open it, including that term’s own course descriptions, then kept in this browser.</p>
         <Button variant="ghost" type="button" onClick={() => void rebuildTerm()} disabled={catalogStatus === "building"}>
           {catalogStatus === "building" ? "Downloading this term…" : "Rebuild this term from Banner"}
         </Button>
       </section>
       <section className="card grid gap-3 p-5">
         <h2 className="font-semibold">Your data</h2>
-        <p className="text-sm text-muted">Schedules, degree plans, saved courses, and the watchlist live in this browser. Export a JSON file to move them. iCloud sync is part of the iOS and Mac apps.</p>
+        <p className="text-sm text-muted">Schedules, degree plans, and saved courses live in this browser. Export a JSON file to move them. If you turn on closed-browser seat alerts, this server also keeps that push subscription and the sections you watch. iCloud sync is part of the iOS and Mac apps.</p>
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={download}>
             Export JSON

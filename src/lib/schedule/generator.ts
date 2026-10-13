@@ -1223,6 +1223,22 @@ export class ScheduleBlockerAnalysis {
   }
 }
 
+/** Restores class methods after a schedule result crosses a worker boundary. */
+export function reviveDiagnostics(raw: ScheduleDiagnostics): ScheduleDiagnostics {
+  return new ScheduleDiagnostics(raw.filters, raw.preferences, raw.courses ?? [], raw.conflictingPairs ?? [], raw.countProblem ?? null);
+}
+
+export function reviveBlockerAnalysis(raw: ScheduleBlockerAnalysis): ScheduleBlockerAnalysis {
+  const analysis = new ScheduleBlockerAnalysis();
+  analysis.requiredCount = raw.requiredCount ?? 0;
+  analysis.notOffered = raw.notOffered ?? [];
+  analysis.filteredOut = raw.filteredOut ?? [];
+  analysis.options = raw.options ?? [];
+  analysis.conflictingPairs = raw.conflictingPairs ?? [];
+  analysis.isIncomplete = !!raw.isIncomplete;
+  return analysis;
+}
+
 export function analyzeBlockers(
   courses: readonly ScheduleCourseInput[],
   filters: ScheduleFilters,

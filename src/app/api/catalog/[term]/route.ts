@@ -16,11 +16,12 @@ export async function GET(_request: Request, context: { params: Promise<{ term: 
 }
 
 /** Builds a full catalog for any term Banner lists and stores it for later requests. */
-export async function POST(_request: Request, context: { params: Promise<{ term: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ term: string }> }) {
   const { term } = await context.params;
   if (!/^\d{6}$/.test(term)) return NextResponse.json({ error: "Unknown term." }, { status: 404 });
+  const body = (await request.json().catch(() => null)) as { refreshDetails?: boolean } | null;
   try {
-    const catalog = await buildTermCatalog(term);
+    const catalog = await buildTermCatalog(term, body?.refreshDetails === true);
     return NextResponse.json(catalog, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof BannerHttpError || error instanceof Error ? error.message : "Couldn't download that term.";

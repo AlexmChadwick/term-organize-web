@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { fetchTerms } from "@/lib/banner-server";
 import { termName } from "@/lib/models";
+import { ensurePushSender } from "@/lib/push-sender";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  ensurePushSender();
   try {
     const terms = await fetchTerms();
     return NextResponse.json({
