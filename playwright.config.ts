@@ -8,8 +8,11 @@ export default defineConfig({
   retries: 0,
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:43123",
-    ...devices["Desktop Chrome"],
   },
+  projects: [
+    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile", use: { ...devices["Pixel 5"] } },
+  ],
   webServer: {
     command: "npm run dev",
     url: "http://127.0.0.1:43123",
