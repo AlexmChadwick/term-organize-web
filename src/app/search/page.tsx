@@ -14,7 +14,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 function SearchScreen() {
   const params = useSearchParams();
   const router = useRouter();
-  const { index, catalogStatus, rememberSearch, user, termCode } = useApp();
+  const { index, catalogStatus, catalogDetail, catalogError, rememberSearch, user, termCode } = useApp();
   const initial = params.get("q") ?? "";
   const [text, setText] = useState(initial);
   const [filters, setFilters] = useState<SearchFilters>(emptySearchFilters());
@@ -200,8 +200,9 @@ function SearchScreen() {
         </div>
       ) : null}
 
-      {catalogStatus === "loading" ? <p className="text-muted">Loading the catalog…</p> : null}
-      {catalogStatus === "missing" ? <p className="text-muted">No bundled catalog for this term. Open a course directly, for example /course/{termCode}/CS/3000, to pull live sections.</p> : null}
+      {catalogStatus === "loading" && !index ? <p className="text-muted">Loading the catalog…</p> : null}
+      {catalogStatus === "building" ? <p className="text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
+      {catalogStatus === "error" ? <p className="text-bad">{catalogError ?? "The catalog did not load."}</p> : null}
 
       {!text.trim() && searchFilterCount(filters) === 0 ? (
         <div className="grid gap-3">

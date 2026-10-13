@@ -27,10 +27,10 @@ npm run e2e
 
 ## What it does
 
-- Search the bundled term with shorthand (`fundies`, `linalg`) and small typos, plus subject, NUpath, level, campus, time, and seat filters.
+- Search any term Banner lists. Fall 2026 ships with the site. Another term is downloaded the first time you open it, cached in IndexedDB, and searched the same way, including shorthand (`fundies`, `linalg`), small typos, and CRNs.
 - Course pages with descriptions, prerequisite and corequisite trees, “prerequisite for,” and a live Banner refresh of sections and seats.
 - A week calendar, conflict checks, a constraint search with a preferences survey and a deterministic reading of plain-language wishes, ranked options with reasons, an explanation when nothing fits, `.ics` export, a PNG of the week, and copyable CRNs.
-- Degree plans: import a degree-audit View Plan PDF or text file, edit it, flag duplicates and missing prerequisites, total the credits, export the same A4 layout, and pull courses in from a schedule.
+- Degree plans: import a degree-audit View Plan PDF or text file, edit it, flag duplicates and missing prerequisites, total the credits, export the same A4 layout, and pull courses in from a schedule. When a course is missing a prerequisite, the page suggests a semester to move it to, using about two years of offering history.
 - A catalog audit for a year, program, and concentration, including substitutions, petitions, waivers, equivalences, NUpath, and university-wide minimums.
 - Free rooms and professor teaching calendars from the snapshot.
 - A seat watch that refreshes while a tab is open and can post a browser notification.

@@ -12,8 +12,8 @@
  */
 
 import { decodeEntities, plainText, tableRows } from "./html";
-import type { Course, CourseKey, CourseSection, Instructor, Meeting, Requisite } from "./models";
-import { HONORS_ATTRIBUTE, minutesFromHHMM, reqAnd, reqCourse, simplifyRequisite } from "./models";
+import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Instructor, Meeting, Requisite, Subject, Term, TermCatalog } from "./models";
+import { HONORS_ATTRIBUTE, compareCourseKeys, keyId, minutesFromHHMM, recomputePostreqs, reqAnd, reqCourse, simplifyRequisite } from "./models";
 
 export interface SubjectLookup {
   code(name: string): string;
@@ -437,7 +437,7 @@ export function stubCourses(banner: BannerSection[]): { courses: Course[]; attri
     } else {
       const special = title.toLowerCase().includes("special topics") || isTopics;
       const low = s.creditHourLow ?? s.creditHours ?? 0;
-      const high = s.creditHourHigh ?? s.creditHours ?? low;
+      const high = s.creditHourHigh ?? low;
       courses.set(key, {
         subject: s.subject,
         number: s.courseNumber,
@@ -457,4 +457,68 @@ export function stubCourses(banner: BannerSection[]): { courses: Course[]; attri
     courses: order.map((id) => courses.get(id)!),
     attributes: [...attributes.entries()].map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code)),
   };
+}
+
+/**
+ * Merges a fresh section scrape into an existing catalog.
+ * Seats, times and locations come from `fresh`. Descriptions and requisites are kept,
+ * or borrowed from `knowledge` (courses known from another term).
+ * Port of `CatalogBuilder.merge`.
+ */
+export function mergeCatalog(options: {
+  existing?: TermCatalog | null;
+  fresh: BannerSection[];
+  term: Term;
+  subjects?: Subject[] | null;
+  campuses?: Campus[] | null;
+  attributes?: AttributeInfo[] | null;
+  knowledge?: ReadonlyMap<string, Course>;
+  now?: number;
+}): TermCatalog {
+  const now = options.now ?? Date.now() / 1000;
+  const existing = options.existing ?? null;
+  const previousSections = new Map((existing?.sections ?? []).map((section) => [section.crn, section]));
+  const previousCourses = new Map((existing?.courses ?? []).map((course) => [keyId(course), course]));
+  const sections = sectionsFromBanner(options.fresh, previousSections);
+  const { courses: stubs, attributes: freshAttributes } = stubCourses(options.fresh);
+  const courses = stubs.map((stub) => {
+    const id = keyId(stub);
+    const known = previousCourses.get(id);
+    if (known) {
+      return {
+        ...known,
+        minCredits: stub.minCredits,
+        maxCredits: stub.maxCredits,
+        attributes: stub.attributes,
+        specialTopics: known.specialTopics || stub.specialTopics,
+      };
+    }
+    const borrowed = options.knowledge?.get(id);
+    if (borrowed) {
+      return {
+        ...borrowed,
+        minCredits: stub.minCredits,
+        maxCredits: stub.maxCredits,
+        attributes: stub.attributes,
+        specialTopics: borrowed.specialTopics || stub.specialTopics,
+        postreqs: [],
+      };
+    }
+    return stub;
+  });
+  const mergedAttributes = new Map((existing?.attributes ?? []).map((attribute) => [attribute.code, attribute]));
+  for (const attribute of [...(options.attributes ?? []), ...freshAttributes]) mergedAttributes.set(attribute.code, attribute);
+  const catalog: TermCatalog = {
+    version: existing?.version ?? 1,
+    term: options.term,
+    generatedAt: existing?.generatedAt ?? now,
+    sectionsUpdatedAt: now,
+    courses: [...courses].sort((a, b) => compareCourseKeys(a, b)),
+    sections: [...sections].sort((a, b) => compareCourseKeys(a, b) || a.sectionNumber.localeCompare(b.sectionNumber)),
+    subjects: options.subjects ?? existing?.subjects ?? [],
+    attributes: [...mergedAttributes.values()].sort((a, b) => a.code.localeCompare(b.code)),
+    campuses: options.campuses ?? existing?.campuses ?? [],
+  };
+  recomputePostreqs(catalog);
+  return catalog;
 }

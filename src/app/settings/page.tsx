@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 export default function SettingsPage() {
-  const { user, updateUser, replaceUser, theme, setTheme, termCode } = useApp();
+  const { user, updateUser, replaceUser, theme, setTheme, termCode, catalogStatus, rebuildTerm } = useApp();
   const [notice, setNotice] = useState<string | null>(null);
   const prefs = user.preferences;
 
@@ -65,7 +65,10 @@ export default function SettingsPage() {
             onChange={(event) => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, watchlistIntervalMinutes: Math.min(120, Math.max(1, Number(event.target.value) || 15)) } }))}
           />
         </label>
-        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Only Fall 2026 is bundled for full search; other terms use live Banner lookups per course.</p>
+        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Fall 2026 ships with the site. Any other term is downloaded from Banner the first time you open it, then kept in this browser.</p>
+        <Button variant="ghost" type="button" onClick={() => void rebuildTerm()} disabled={catalogStatus === "building"}>
+          {catalogStatus === "building" ? "Downloading this term…" : "Rebuild this term from Banner"}
+        </Button>
       </section>
       <section className="card grid gap-3 p-5">
         <h2 className="font-semibold">Your data</h2>

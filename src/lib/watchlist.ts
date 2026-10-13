@@ -35,6 +35,8 @@ export interface WatchOutcome {
   items: WatchItem[];
   alerts: WatchAlert[];
   missingIDs: string[];
+  /** Terms for which fresh data was available. */
+  checkedTermCodes: string[];
 }
 
 export function sectionName(section: CourseSection): string {
@@ -93,10 +95,57 @@ export function compareWatchlist(
           kind === "seats"
             ? `${section.seatCapacity > 0 ? `${section.seatsRemaining} of ${section.seatCapacity} seats` : `${section.seatsRemaining} seats`} in ${name} (CRN ${item.crn}). Register soon!`
             : `${section.waitlistRemaining === 1 ? "1 waitlist spot" : `${section.waitlistRemaining} waitlist spots`} open in ${name} (CRN ${item.crn}). Join soon!`,
-        url: `/section/${item.termCode}/${item.crn}`,
+        url: `termorganize://section/${item.termCode}/${item.crn}`,
       });
     }
     updated[index] = next;
   });
-  return { items: updated, alerts, missingIDs };
+  return { items: updated, alerts, missingIDs, checkedTermCodes: Object.keys(live) };
+}
+
+export type WatchStatus = "open" | "waitlist" | "full" | "missing";
+
+/** Availability of a watched section as of its last check. Missing wins over the last numbers. */
+export function watchlistStatus(item: WatchItem, isMissing: boolean): WatchStatus {
+  if (isMissing) return "missing";
+  if (item.lastSeatsRemaining > 0) return "open";
+  if (item.lastWaitlistRemaining > 0) return "waitlist";
+  return "full";
+}
+
+/** One line describing the numbers behind the status, e.g. `3 of 40 open`. */
+export function watchlistDetail(status: WatchStatus, item: WatchItem): string {
+  switch (status) {
+    case "open":
+      return item.seatCapacity > 0
+        ? `${item.lastSeatsRemaining} of ${item.seatCapacity} open`
+        : `${item.lastSeatsRemaining} open`;
+    case "waitlist": {
+      const spots = item.lastWaitlistRemaining;
+      return `Full \u00b7 ${spots} waitlist ${spots === 1 ? "spot" : "spots"} open`;
+    }
+    case "full":
+      return "Full";
+    case "missing":
+      return "No longer listed";
+  }
+}
+
+/** The same numbers phrased for speech: `3 of 40 seats open`. */
+export function watchlistSpokenDetail(status: WatchStatus, item: WatchItem): string {
+  if (status !== "open") return watchlistDetail(status, item);
+  const seats = item.lastSeatsRemaining;
+  return item.seatCapacity > 0
+    ? `${seats} of ${item.seatCapacity} seats open`
+    : `${seats} ${seats === 1 ? "seat" : "seats"} open`;
+}
+
+/** `just now`, `5 min ago`, `3 hr ago`, `yesterday`, `4 days ago`. */
+export function watchlistAgo(date: number, now: number): string {
+  const seconds = Math.max(0, now - date);
+  if (seconds < 60) return "just now";
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)} hr ago`;
+  const days = Math.floor(seconds / 86_400);
+  return days === 1 ? "yesterday" : `${days} days ago`;
 }

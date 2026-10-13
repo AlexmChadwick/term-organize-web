@@ -4,7 +4,7 @@ import { useApp } from "@/lib/app-state";
 import { courseHref } from "@/components/bits";
 import { TextInput } from "@/components/ui";
 import { availabilityOf, filterBuildings, momentFromCampusClock, momentFromDate, roomStatusDetail, roomStatusSummary } from "@/lib/rooms";
-import { keyId } from "@/lib/models";
+import { courseColorForCode, keyId } from "@/lib/models";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -74,6 +74,10 @@ export default function RoomsPage() {
                   {entry.status.kind === "busy" ? (
                     <Link className="underline" href={courseHref(termCode, entry.status.booking.course)}>
                       {" "}
+                      <span
+                        className="mr-1 inline-block h-2 w-2 rounded-full"
+                        style={{ background: courseColorForCode(keyId(entry.status.booking.course)).stroke }}
+                      />
                       {keyId(entry.status.booking.course)}
                     </Link>
                   ) : null}

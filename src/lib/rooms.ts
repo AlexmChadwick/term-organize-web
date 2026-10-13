@@ -8,7 +8,7 @@
  */
 
 import type { BuildingSummary, RoomBooking, RoomSchedule } from "./catalog-index";
-import { dayHas, timeLabel } from "./models";
+import { DAY_FULL, dayHas, timeLabel } from "./models";
 import { keyId } from "./models";
 
 export const FIRST_CLASS_MINUTE = 7 * 60;
@@ -142,6 +142,64 @@ export function momentFromCampusClock(date: string, time: string): RoomMoment {
   const weekdayName = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(probe);
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekdayName);
   return { weekday: weekday < 0 ? 0 : weekday, minutes: (hour || 0) * 60 + (minute || 0), date };
+}
+
+/** A point in a typical week. Weekdays wrap, and minutes stay inside one day. */
+export function roomMoment(weekday: number, minutes: number): RoomMoment {
+  const wrapped = ((weekday % 7) + 7) % 7;
+  return { weekday: wrapped, minutes: Math.min(Math.max(minutes, 0), 24 * 60 - 1) };
+}
+
+/** Classes run from 7 AM to 10 PM; outside that, buildings are usually locked. */
+export function isWithinClassHours(moment: RoomMoment): boolean {
+  return moment.minutes >= FIRST_CLASS_MINUTE && moment.minutes < LAST_CLASS_MINUTE;
+}
+
+/** `Tuesday at 2:30 PM`. */
+export function momentLabel(moment: RoomMoment): string {
+  return `${DAY_FULL[moment.weekday] ?? "Sunday"} at ${timeLabel(moment.minutes)}`;
+}
+
+/** A free room that will be taken within half an hour isn't much use. */
+export function isFreeOnlyBriefly(status: RoomStatus, moment: RoomMoment): boolean {
+  return status.kind === "free" && minutesRemaining(status, moment.minutes) < 30;
+}
+
+/**
+ * Stretches of a day without a class between `start` and `end` (minutes after midnight).
+ * Each pair is a half-open interval `[from, to)`.
+ */
+export function freeStretches(day: RoomBooking[], start: number, end: number): [number, number][] {
+  if (start >= end) return [];
+  const stretches: [number, number][] = [];
+  let cursor = start;
+  const sorted = [...day].sort((a, b) => a.start - b.start || a.end - b.end);
+  for (const booking of sorted) {
+    if (booking.start >= end) break;
+    if (booking.start > cursor) stretches.push([cursor, booking.start]);
+    cursor = Math.max(cursor, booking.end);
+    if (cursor >= end) return stretches;
+  }
+  if (cursor < end) stretches.push([cursor, end]);
+  return stretches;
+}
+
+/**
+ * How many rooms have no class during each whole hour from 7 AM to 10 PM.
+ * `result[0]` is 7–8 AM.
+ */
+export function freeRoomCounts(rooms: RoomSchedule[], weekday: number, date?: string): number[] {
+  const hours = (LAST_CLASS_MINUTE - FIRST_CLASS_MINUTE) / 60;
+  const counts = Array.from({ length: hours }, () => 0);
+  for (const room of rooms) {
+    const day = bookingsOn(room, weekday, date);
+    for (let hour = 0; hour < hours; hour++) {
+      const start = FIRST_CLASS_MINUTE + hour * 60;
+      const end = start + 60;
+      if (!day.some((booking) => booking.start < end && booking.end > start)) counts[hour] = (counts[hour] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 export function momentFromDate(date: Date, timeZone = "America/New_York"): RoomMoment {

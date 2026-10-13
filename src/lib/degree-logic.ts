@@ -10,7 +10,7 @@
 import type { CatalogIndex } from "./catalog-index";
 import { CourseEquivalences } from "./equivalences";
 import type { CourseKey, Requisite, Term } from "./models";
-import { courseKeyOf, keyId, termCalendarYear, termSeason } from "./models";
+import { compareCourseKeys, courseKeyOf, creditsLabel, keyId, referencedCourses, sameKey, termCalendarYear, termSeason } from "./models";
 import type { DegreePlan, DegreePlanCourse, DegreePlanTerm, PlanSeason } from "./requirements";
 import { seasonStartMonth, termSortKey } from "./requirements";
 import type { SchedulePlan } from "./user";
@@ -45,6 +45,42 @@ export function coursesBefore(plan: DegreePlan, termIndex: number): Set<string> 
 export function planEquivalences(plan: DegreePlan, extra?: CourseEquivalences): CourseEquivalences {
   const declared = CourseEquivalences.fromPairs(plan.courseEquivalences.map((e) => [e.course, e.countsAs]));
   return extra ? extra.merging(declared) : declared;
+}
+
+/** Drops the course itself and repeats, then sorts. Port of `CourseInfo.init` equivalents. */
+export function normalizeEquivalents(course: CourseKey, equivalents: readonly CourseKey[]): CourseKey[] {
+  const seen = new Set<string>();
+  const unique: CourseKey[] = [];
+  for (const item of equivalents) {
+    if (sameKey(item, course)) continue;
+    const id = keyId(item);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(item);
+  }
+  return unique.sort(compareCourseKeys);
+}
+
+/** `4 credits` or `1–4 credits`. Null when the catalog entry doesn't say. */
+export function courseInfoCreditsLabel(min?: number | null, max?: number | null): string | null {
+  const low = min ?? max;
+  if (low == null) return null;
+  return creditsLabel(low, max ?? low);
+}
+
+export function missingCount(requisite: Requisite, taken: Set<string>, equivalences = CourseEquivalences.none()): number {
+  return missingCountNode(requisite, equivalences.expanding(taken));
+}
+
+/** Courses a requisite names that were covered by a different equivalent that was taken. */
+export function coveringEquivalents(requisite: Requisite, taken: Set<string>, equivalences: CourseEquivalences): Record<string, CourseKey> {
+  const covering: Record<string, CourseKey> = {};
+  for (const course of referencedCourses(requisite)) {
+    if (taken.has(keyId(course))) continue;
+    const equivalent = equivalences.satisfier(course, taken);
+    if (equivalent) covering[keyId(course)] = equivalent;
+  }
+  return covering;
 }
 
 export function unmetSummary(requisite: Requisite, takenIds: Set<string>, equivalences = CourseEquivalences.none()): string | null {

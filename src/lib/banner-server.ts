@@ -7,9 +7,14 @@
  * Endpoint usage follows SearchNEU's scraper and the Swift BannerClient.
  */
 
-import { parseCatalogDetails, parseCorequisites, parseDescription, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
-import type { Course, CourseSection, Term } from "./models";
+import path from "node:path";
+import { mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
+import { listStoredTermCodes, loadBestCatalog, saveBuiltCatalog } from "./catalog-store";
+import { OfferingHistory } from "./degree/reordering";
 import { decodeEntities } from "./html";
+import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Subject, Term, TermCatalog } from "./models";
+import { keyId, termCollege } from "./models";
+import { OfferingHistoryRepository, type OfferingIndex } from "./offering-history";
 
 const BASE = "https://nubanner.neu.edu/StudentRegistrationSsb/ssb/";
 
@@ -78,19 +83,181 @@ async function openSession(term: string): Promise<string> {
   return header;
 }
 
-async function searchSections(cookie: string, term: string, subject?: string, courseNumber?: string): Promise<BannerSection[]> {
+async function searchPage(
+  cookie: string,
+  term: string,
+  offset: number,
+  pageSize: number,
+  subject?: string,
+  courseNumber?: string,
+): Promise<{ totalCount: number; data: BannerSection[] }> {
   const query: Record<string, string> = {
     txt_term: term,
-    pageOffset: "0",
-    pageMaxSize: "500",
+    pageOffset: String(offset),
+    pageMaxSize: String(pageSize),
     sortColumn: "subjectDescription",
     sortDirection: "asc",
   };
   if (subject) query.txt_subject = subject;
   if (courseNumber) query.txt_courseNumber = courseNumber;
   const res = await bannerFetch(endpoint("searchResults/searchResults", query), { headers: { Cookie: cookie } });
-  const page = (await res.json()) as { data?: BannerSection[] };
-  return page.data ?? [];
+  const page = (await res.json()) as { totalCount?: number; data?: BannerSection[] };
+  return { totalCount: page.totalCount ?? 0, data: page.data ?? [] };
+}
+
+async function searchSections(cookie: string, term: string, subject?: string, courseNumber?: string): Promise<BannerSection[]> {
+  return (await searchPage(cookie, term, 0, 500, subject, courseNumber)).data;
+}
+
+export async function fetchCampuses(term: string): Promise<Campus[]> {
+  const res = await bannerFetch(endpoint("classSearch/get_campus", { searchTerm: "", term, offset: "1", max: "200" }));
+  const items = (await res.json()) as { code: string; description: string }[];
+  return items.map((item) => ({ code: item.code, name: decodeEntities(item.description).trim() }));
+}
+
+export async function fetchAttributes(term: string): Promise<AttributeInfo[]> {
+  const res = await bannerFetch(endpoint("classSearch/get_attribute", { searchTerm: "", term, offset: "1", max: "500" }));
+  const items = (await res.json()) as { code: string; description: string }[];
+  return items.map((item) => ({ code: item.code, name: decodeEntities(item.description).trim() }));
+}
+
+/**
+ * Every section in a term. Pages are fetched with a few independent sessions,
+ * the same way SearchNEU and `BannerClient.fetchAllSections` do it.
+ */
+export async function fetchAllSections(term: string, parallelism = 4): Promise<BannerSection[]> {
+  const pageSize = 500;
+  const first = await openSession(term);
+  const probe = await searchPage(first, term, 0, 1);
+  const total = probe.totalCount;
+  if (total <= 0) return [];
+  const pageCount = Math.ceil(total / pageSize);
+  const sessions = [first];
+  const workers = Math.max(1, Math.min(parallelism, pageCount));
+  for (let i = 1; i < workers; i++) sessions.push(await openSession(term));
+
+  const pages: BannerSection[][] = new Array(pageCount);
+  let nextPage = 0;
+  async function worker(slot: number) {
+    let cookie = sessions[slot]!;
+    while (nextPage < pageCount) {
+      const page = nextPage;
+      nextPage += 1;
+      const load = async (header: string) => searchPage(header, term, page * pageSize, pageSize);
+      try {
+        pages[page] = (await load(cookie)).data;
+      } catch {
+        cookie = await openSession(term);
+        sessions[slot] = cookie;
+        pages[page] = (await load(cookie)).data;
+      }
+    }
+  }
+  await Promise.all(sessions.map((_, slot) => worker(slot)));
+
+  const seen = new Set<string>();
+  const all: BannerSection[] = [];
+  for (const page of pages) {
+    for (const section of page ?? []) {
+      if (!seen.has(section.courseReferenceNumber)) {
+        seen.add(section.courseReferenceNumber);
+        all.push(section);
+      }
+    }
+  }
+  return all;
+}
+
+async function knowledgeFor(termCode: string): Promise<Map<string, Course>> {
+  const knowledge = new Map<string, Course>();
+  for (const code of await listStoredTermCodes()) {
+    if (code === termCode) continue;
+    const catalog = await loadBestCatalog(code);
+    if (!catalog) continue;
+    for (const course of catalog.courses) {
+      const id = keyId(course);
+      if (course.detailsLoaded && !knowledge.has(id)) knowledge.set(id, course);
+    }
+  }
+  return knowledge;
+}
+
+const builds = new Map<string, Promise<TermCatalog>>();
+
+/** Downloads every section of a term and merges it with what is already known. */
+export function buildTermCatalog(termCode: string): Promise<TermCatalog> {
+  const running = builds.get(termCode);
+  if (running) return running;
+  const job = buildTermCatalogOnce(termCode).finally(() => {
+    builds.delete(termCode);
+  });
+  builds.set(termCode, job);
+  return job;
+}
+
+async function buildTermCatalogOnce(termCode: string): Promise<TermCatalog> {
+  const listed = await fetchTerms(80).catch(() => [] as Term[]);
+  const term = listed.find((item) => item.code === termCode) ?? { code: termCode, bannerDescription: termCode };
+  const [subjects, campuses, attributes] = await Promise.all([
+    fetchSubjects(termCode).catch(() => null as Subject[] | null),
+    fetchCampuses(termCode).catch(() => null as Campus[] | null),
+    fetchAttributes(termCode).catch(() => null as AttributeInfo[] | null),
+  ]);
+  const sections = await fetchAllSections(termCode);
+  const existing = await loadBestCatalog(termCode);
+  const catalog = mergeCatalog({
+    existing,
+    fresh: sections,
+    term,
+    subjects,
+    campuses,
+    attributes,
+    knowledge: await knowledgeFor(termCode),
+  });
+  await saveBuiltCatalog(catalog);
+  return catalog;
+}
+
+async function fetchOfferedCourses(term: string, courses: CourseKey[]): Promise<CourseKey[]> {
+  if (!courses.length) return [];
+  const cookie = await openSession(term);
+  const offered: CourseKey[] = [];
+  for (let i = 0; i < courses.length; i++) {
+    if (i > 0) {
+      await bannerFetch(endpoint("classSearch/resetDataForm"), { method: "POST", headers: { Cookie: cookie } });
+    }
+    const key = courses[i]!;
+    const page = await searchPage(cookie, term, 0, 20, key.subject, key.number);
+    if (page.data.some((section) => section.subject === key.subject && section.courseNumber === key.number)) offered.push(key);
+  }
+  return offered;
+}
+
+const offeringRepository = new OfferingHistoryRepository({
+  fetcher: {
+    terms: () => fetchTerms(80),
+    offeredCourses: fetchOfferedCourses,
+  },
+  filePath: path.join(process.cwd(), "data", "built", "offering-history.json"),
+});
+
+async function offeringIndexes(): Promise<OfferingIndex[]> {
+  const indexes: OfferingIndex[] = [];
+  for (const code of await listStoredTermCodes()) {
+    const catalog = await loadBestCatalog(code);
+    if (!catalog || termCollege(code) !== "neu") continue;
+    const offered = new Set(catalog.sections.map((section) => `${section.subject} ${section.number}`));
+    indexes.push({
+      term: catalog.term,
+      sectionsFor: (key) => (offered.has(keyId(key)) ? [key] : []),
+    });
+  }
+  return indexes;
+}
+
+/** Offering history for a handful of courses, using stored catalogs before Banner. */
+export async function offeringHistoryFor(keys: readonly CourseKey[]): Promise<OfferingHistory> {
+  return offeringRepository.history(keys, await offeringIndexes());
 }
 
 async function postForm(path: string, term: string, crn: string): Promise<string> {

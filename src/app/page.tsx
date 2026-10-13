@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 export default function HomePage() {
-  const { index, catalogStatus, user, updateUser, plan, termCode } = useApp();
+  const { index, catalogStatus, catalogDetail, catalogError, user, updateUser, plan, termCode } = useApp();
   const [query, setQuery] = useState("");
   const subjects = index ? popularSubjects(index, 8) : [];
   const sections = useMemo(() => {
@@ -39,11 +39,9 @@ export default function HomePage() {
             Search
           </button>
         </form>
-        {catalogStatus === "loading" ? <p className="mt-3 text-sm text-muted">Loading the Fall 2026 snapshot…</p> : null}
-        {catalogStatus === "missing" ? (
-          <p className="mt-3 text-sm text-muted">This term has no bundled snapshot. Search still opens a course by subject and number, and live seats come from Banner.</p>
-        ) : null}
-        {catalogStatus === "error" ? <p className="mt-3 text-sm text-bad">The catalog did not load. Refresh the page.</p> : null}
+        {catalogStatus === "loading" && !index ? <p className="mt-3 text-sm text-muted">Loading the catalog…</p> : null}
+        {catalogStatus === "building" ? <p className="mt-3 text-sm text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
+        {catalogStatus === "error" ? <p className="mt-3 text-sm text-bad">{catalogError ?? "The catalog did not load. Refresh the page."}</p> : null}
       </section>
 
       {!user.preferences.hasCompletedOnboarding ? (
@@ -52,7 +50,7 @@ export default function HomePage() {
           <ul className="mt-2 grid gap-1 text-sm text-muted">
             <li>Unofficial tool. It reads public Banner and catalog pages. It cannot enroll you.</li>
             <li>Schedules, plans, and seat alerts stay in this browser until you export them.</li>
-            <li>The bundled snapshot is Fall 2026. Other terms refresh one course at a time.</li>
+            <li>Fall 2026 is already downloaded. Any other term Banner lists is fetched the first time you open it.</li>
           </ul>
           <button className="btn mt-4" type="button" onClick={() => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, hasCompletedOnboarding: true } }))}>
             Got it

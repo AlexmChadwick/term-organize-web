@@ -40,6 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# catalogs downloaded from Banner
+/data/built
+
 # local uploads and agent scratch
 /uploads
 /agent-tools

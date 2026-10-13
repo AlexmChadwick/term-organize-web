@@ -3,22 +3,33 @@
 import { SeatText, courseHref, meetingLabel } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
+import { nextColorIndex } from "@/lib/user";
 import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel } from "@/lib/models";
 import Link from "next/link";
 import { useEffect } from "react";
 
 export function SectionView({ term, crn }: { term: string; crn: string }) {
-  const { index, termCode, setTermCode, addCourseToPlan, watchSection, unwatch, isWatched, plan, updatePlan, ensurePlan } = useApp();
+  const { index, termCode, setTermCode, addCourseToPlan, watchSection, unwatch, isWatched, plan, updatePlan, ensurePlan, catalogStatus, catalogDetail, catalogError } = useApp();
   useEffect(() => {
     if (term !== termCode) setTermCode(term);
   }, [term, termCode, setTermCode]);
-  const section = index?.sectionByCRN(crn);
-  if (!index) return <p className="text-muted">Loading the catalog…</p>;
+  const section = index && index.catalog.term.code === term ? index.sectionByCRN(crn) : undefined;
+  if (!index || index.catalog.term.code !== term) {
+    return (
+      <p className="text-muted">
+        {catalogStatus === "building"
+          ? (catalogDetail ?? "Downloading every section of this term from Banner…")
+          : catalogStatus === "error"
+            ? (catalogError ?? "The catalog did not load.")
+            : "Loading the catalog…"}
+      </p>
+    );
+  }
   if (!section) {
     return (
       <div className="card p-5">
         <h1 className="text-2xl font-semibold">CRN {crn}</h1>
-        <p className="mt-2 text-muted">That CRN is not in the bundled snapshot for this term. Search by course and refresh seats from Banner.</p>
+        <p className="mt-2 text-muted">That CRN is not in this term’s catalog.</p>
       </div>
     );
   }
@@ -63,7 +74,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
                 ...item,
                 courses: item.courses.some((course) => course.key.subject === key.subject && course.key.number === key.number)
                   ? item.courses
-                  : [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: item.courses.length }],
+                  : [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(item) }],
                 selectedCRNs: [...item.selectedCRNs.filter((id) => index.sectionByCRN(id)?.subject !== key.subject || index.sectionByCRN(id)?.number !== key.number), crn],
               }));
             }}

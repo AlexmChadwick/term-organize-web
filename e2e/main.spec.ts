@@ -58,6 +58,51 @@ test("schedule generator and natural-language preferences", async ({ page }) => 
   await expect(page.getByText(/\d+ schedules? fit\.|don't share a conflict-free week|No section/)).toBeVisible();
 });
 
+test("degree plan PDF round-trip and a catalog audit", async ({ page }) => {
+  const indexHtml = `<a href="/undergraduate/computer-information-science/computer-science/bscs/">Computer Science, BSCS</a>`;
+  const programHtml = `
+<html><body>
+<div id="programrequirementstextcontainer" class="tab_content">
+<p>Complete all courses listed below unless otherwise indicated.</p>
+<h2>Major Requirements</h2>
+<table class="sc_courselist"><tbody>
+<tr class="even areaheader firstrow"><td colspan="2"><span class="courselistcomment areaheader">Required Courses</span></td><td class="hourscol"></td></tr>
+<tr class="odd"><td class="codecol"><a class="bubblelink code">CS&#160;3000</a></td><td>Algorithms and Data</td><td class="hourscol">4</td></tr>
+<tr class="even lastrow"><td class="codecol"><a class="bubblelink code">CS&#160;4500</a></td><td>Software Development</td><td class="hourscol">4</td></tr>
+</tbody></table>
+</div>
+</body></html>`;
+  await page.route("**/api/catalog-site**", async (route) => {
+    const target = new URL(route.request().url()).searchParams.get("url") ?? "";
+    const body = target.includes("azindex") ? indexHtml : programHtml;
+    await route.fulfill({ status: 200, contentType: "text/html", body });
+  });
+
+  await page.goto("/degree");
+  await page.getByRole("button", { name: "New plan" }).click();
+  await page.getByLabel("Plan name").fill("Audit plan");
+  await page.getByPlaceholder("CS 2500").fill("CS 3000");
+  await page.getByRole("button", { name: "Add completed" }).click();
+  await expect(page.getByRole("link", { name: "CS 3000" })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export PDF" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/\.pdf$/);
+  const pdfPath = await download.path();
+  expect(pdfPath).toBeTruthy();
+
+  await page.locator('input[type="file"]').setInputFiles(pdfPath!);
+  await expect(page.getByText(/Imported/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "CS 3000" }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Load programs" }).click();
+  await page.getByRole("button", { name: "Computer Science, BSCS" }).click();
+  await expect(page.getByText("Computer Science, BSCS (Boston)").or(page.getByText("Computer Science, BSCS"))).toBeVisible();
+  await expect(page.getByText("Algorithms and Data").or(page.getByText("CS 3000"))).toBeVisible();
+  await expect(page.locator("li").filter({ hasText: /complete|partial|missing|planned/ }).first()).toBeVisible();
+});
+
 test("degree plan, professors, and the watchlist", async ({ page }) => {
   await page.goto("/degree");
   await expect(page.getByRole("heading", { name: "Degree plan" })).toBeVisible();

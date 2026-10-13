@@ -1,17 +1,20 @@
 "use client";
 
 import { courseHref } from "@/components/bits";
+import type { CatalogIndex } from "@/lib/catalog-index";
+import { SemesterMoves } from "@/components/semester-moves";
 import { Button, Select, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { ruleResults, runDegreeAudit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide, programURL, programsFromIndex, universitywideLink } from "@/lib/degree/catalog-parser";
 import { courseAttributes } from "@/lib/degree/nupath";
-import { duplicateKeys, newDegreePlanDraft, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
+import { duplicateKeys, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
 import { equivalencesFromDeclarations } from "@/lib/equivalences";
-import { keyId, parseCourseKey } from "@/lib/models";
-import { catalogYearLabel, completedCredits, concentrationName, editionsAll, estimatedEditions, plannedCredits, type CatalogProgram, type CatalogYear, type DegreePlan, type DegreePlanCourse, type PlanSeason, type ProgramRequirements, PLAN_SEASON_SHORT } from "@/lib/requirements";
+import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
+import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
+import { catalogYearLabel, completedCredits, concentrationName, editionsAll, estimatedEditions, plannedCredits, type CatalogProgram, type CatalogYear, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm, type PlanSeason, type ProgramRequirements, PLAN_SEASON_SHORT } from "@/lib/requirements";
 import { keepOnePrimaryDegree, newId } from "@/lib/user";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -147,6 +150,16 @@ export default function DegreePage() {
             setNotice("Added courses from your primary schedules into matching semesters.");
           }}
           lookupPrereq={(key, termIndex) => prerequisiteStatus(key, termIndex, plan, index)}
+          index={index}
+          onMove={(option) => {
+            const next = applyMoveToPlan(option.suggestion, plan);
+            if (JSON.stringify(next.terms) === JSON.stringify(plan.terms)) {
+              setNotice("Your degree plan changed. Check the updated suggestions.");
+              return;
+            }
+            save({ ...next, updatedAt: Date.now() });
+            setNotice(option.appliedText);
+          }}
         />
       ) : null}
 
@@ -312,6 +325,8 @@ function PlanEditor({
   onExportPDF,
   onAutofill,
   lookupPrereq,
+  index,
+  onMove,
 }: {
   plan: DegreePlan;
   duplicates: Set<string>;
@@ -322,6 +337,8 @@ function PlanEditor({
   onExportPDF: () => void;
   onAutofill: () => void;
   lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number) => { kind: string; text?: string };
+  index: CatalogIndex | null;
+  onMove: (option: MoveOption) => void;
 }) {
   const [draft, setDraft] = useState("CS 3000");
   const total = completedCredits(plan) + plannedCredits(plan);
@@ -413,10 +430,32 @@ function PlanEditor({
               );
             })}
           </ul>
+          <SemesterMoves plan={plan} termID={term.id} blocking={blockingCourses(term, termIndex, lookupPrereq, index)} index={index} onApply={onMove} />
         </div>
       ))}
     </section>
   );
+}
+
+function blockingCourses(
+  term: DegreePlanTerm,
+  termIndex: number,
+  lookupPrereq: (key: CourseKey, termIndex: number) => { kind: string },
+  index: CatalogIndex | null,
+): CourseKey[] {
+  const seen = new Set<string>();
+  const keys: CourseKey[] = [];
+  for (const course of term.courses) {
+    if (!course.key) continue;
+    const missing = lookupPrereq(course.key, termIndex).kind === "missing";
+    const unoffered = index != null && planTermMatches(term, index.catalog.term) && index.sectionsOf(course.key).length === 0;
+    if (!missing && !unoffered) continue;
+    const id = keyId(course.key);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    keys.push(course.key);
+  }
+  return keys;
 }
 
 function CourseList({ courses, onChange, termCode }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string }) {

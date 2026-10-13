@@ -1,26 +1,29 @@
 "use client";
 
 import { WeekCalendar, blocksFromSections, courseHref } from "@/components/bits";
+import { SemesterMoves } from "@/components/semester-moves";
 import { Button, TextArea, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
+import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
 import { sectionsToICS, downloadText } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
-import { DAY_SHORT, courseColorAt, creditsLabel, keyId, scheduleSummary, sectionsConflict, timeLabel } from "@/lib/models";
+import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
 import { emptyPreferences, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type TimeBand, type TimePreference } from "@/lib/preferences";
-import { courseInputsFor, generateSchedules, type ScheduleGenerationResult, type ScheduleSortOption } from "@/lib/schedule";
-import { scheduleSuggestions } from "@/lib/degree-logic";
-import { termName } from "@/lib/models";
+import { analyzeEmptyResult, courseInputsFor, explainGeneration, generateSchedules, ScheduleNoResultsText, type ScheduleGenerationResult, type ScheduleNoResults, type ScheduleSortOption } from "@/lib/schedule";
+import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
+import { nextColorIndex } from "@/lib/user";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 export default function SchedulePage() {
   const app = useApp();
-  const { index, plan, ensurePlan, updatePlan, user, updateUser, termCode } = app;
+  const { index, plan, ensurePlan, updatePlan, user, updateUser, termCode, catalogStatus, catalogDetail, catalogError } = app;
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ScheduleSortOption>("best");
   const [message, setMessage] = useState<string | null>(null);
+  const [emptyHelp, setEmptyHelp] = useState<ScheduleNoResults | null>(null);
   const [wish, setWish] = useState("");
   const [results, setResults] = useState<ScheduleGenerationResult | null>(null);
   const active = plan;
@@ -66,7 +69,7 @@ export default function SchedulePage() {
 
   function colorFor(section: CourseSection) {
     const course = active?.courses.find((item) => item.key.subject === section.subject && item.key.number === section.number);
-    return course?.colorIndex ?? 0;
+    return course?.colorIndex ?? courseColorIndex(keyId({ subject: section.subject, number: section.number }));
   }
 
   function add(key: CourseKey) {
@@ -74,7 +77,7 @@ export default function SchedulePage() {
     if (target.courses.some((course) => keyId(course.key) === keyId(key))) return;
     updatePlan(target.id, (item) => ({
       ...item,
-      courses: [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: item.courses.length % 10 }],
+      courses: [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(item) }],
     }));
     setQuery("");
   }
@@ -96,13 +99,72 @@ export default function SchedulePage() {
       allowSampling: true,
     });
     setResults(generated);
-    setMessage(generated.schedules.length ? `${generated.totalFound} schedule${generated.totalFound === 1 ? "" : "s"} fit.` : explainGeneration(generated));
+    if (generated.schedules.length) {
+      setEmptyHelp(null);
+      setMessage(`${generated.totalFound} schedule${generated.totalFound === 1 ? "" : "s"} fit.`);
+      return;
+    }
+    setEmptyHelp(analyzeEmptyResult(inputs, target.filters, target.preferences ?? emptyPreferences(), generated.diagnostics));
+    setMessage(explainGeneration(generated, termName(index.catalog.term)));
   }
 
-  if (!index) return <p className="text-muted">Loading the catalog for the schedule builder…</p>;
+  if (!index) {
+    return (
+      <p className="text-muted">
+        {catalogStatus === "building"
+          ? (catalogDetail ?? "Downloading every section of this term from Banner…")
+          : catalogStatus === "error"
+            ? (catalogError ?? "The catalog did not load.")
+            : "Loading the catalog for the schedule builder…"}
+      </p>
+    );
+  }
 
   const prefs = active?.preferences ?? emptyPreferences();
   const hours = { start: user.preferences.calendarStartHour, end: user.preferences.calendarEndHour };
+  const degreePlan = user.degreePlans.find((item) => item.isPrimary) ?? user.degreePlans[0] ?? null;
+  const matchingSemester = degreePlan?.terms.find((term) => planTermMatches(term, index.catalog.term)) ?? null;
+
+  function makeOptional(keys: CourseKey[]) {
+    const ids = new Set(keys.map((key) => keyId(key)));
+    updatePlan(current().id, (item) => ({
+      ...item,
+      courses: item.courses.map((course) => (ids.has(keyId(course.key)) ? { ...course, isRequired: false } : course)),
+    }));
+  }
+
+  function applyScheduleMove(option: MoveOption) {
+    if (!degreePlan) return;
+    const next = applyMoveToPlan(option.suggestion, degreePlan);
+    if (JSON.stringify(next.terms) === JSON.stringify(degreePlan.terms)) {
+      setMessage("Your degree plan changed. Check the updated suggestions.");
+      return;
+    }
+    updateUser((prev) => ({
+      ...prev,
+      degreePlans: prev.degreePlans.map((item) => (item.id === degreePlan.id ? { ...next, updatedAt: Date.now() } : item)),
+    }));
+    const catalog = index;
+    if (!catalog) return;
+    const removed = new Set(option.movedAway.flatMap((key) => catalog.sectionsOf(key).map((section) => section.crn)));
+    const away = new Set(option.movedAway.map((key) => keyId(key)));
+    updatePlan(current().id, (item) => {
+      let courses = item.courses.filter((course) => !away.has(keyId(course.key)));
+      for (const key of option.movedIn) {
+        if (!catalog.sectionsOf(key).length || courses.some((course) => keyId(course.key) === keyId(key))) continue;
+        courses = [...courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex({ ...item, courses }) }];
+      }
+      return {
+        ...item,
+        courses,
+        selectedCRNs: item.selectedCRNs.filter((crn) => !removed.has(crn)),
+        favoriteCombinations: item.favoriteCombinations.filter((combo) => !combo.some((crn) => removed.has(crn))),
+      };
+    });
+    setMessage(option.scheduleEffect ? `${option.appliedText} ${option.scheduleEffect}` : option.appliedText);
+    setEmptyHelp(null);
+    setResults(null);
+  }
 
   return (
     <div className="grid gap-5">
@@ -389,6 +451,9 @@ export default function SchedulePage() {
               Generate schedules
             </Button>
             {message ? <p className="text-sm text-muted">{message}</p> : null}
+            {emptyHelp && results && results.schedules.length === 0 ? (
+              <EmptyGeneration help={emptyHelp} termLabel={termName(index.catalog.term)} onOptional={makeOptional} degree={degreePlan} semesterID={matchingSemester?.id ?? null} index={index} onMove={applyScheduleMove} />
+            ) : null}
             <ul className="grid gap-2">
               {results?.schedules.map((schedule, rank) => (
                 <li key={schedule.id} className="rounded-2xl border border-line p-3">
@@ -445,28 +510,39 @@ export default function SchedulePage() {
   }
 }
 
-function explainGeneration(result: ScheduleGenerationResult): string {
-  const lines: string[] = [];
-  const problem = result.diagnostics.countProblem;
-  if (problem?.kind === "tooManyRequired") lines.push(`You marked ${problem.required} courses as required, but asked for schedules of ${problem.wanted}.`);
-  if (problem?.kind === "tooFewCourses") lines.push(`Only ${problem.available} courses are available, and you asked for ${problem.wanted}.`);
-  if (problem?.kind === "creditsOverTarget") lines.push(`Required courses are already ${problem.required} credits, over the ${problem.limit} credit limit.`);
-  if (problem?.kind === "creditsUnderTarget") lines.push(`Those courses only add up to ${problem.available} credits. The target is ${problem.wanted}.`);
-  for (const course of result.diagnostics.blockedRequiredCourses) {
-    const bits = Object.entries(course.rejections)
-      .filter((entry) => entry[1])
-      .map(([reason, count]) => `${count} ${reason}`);
-    lines.push(`${keyId(course.key)} has no section left${bits.length ? ` (${bits.join("; ")})` : ""}.`);
-  }
-  for (const pair of result.diagnostics.conflictingPairs) {
-    lines.push(
-      pair.reason === "travelTime"
-        ? `${keyId(pair.first)} and ${keyId(pair.second)} don't leave enough time to walk between buildings.`
-        : `${keyId(pair.first)} and ${keyId(pair.second)} overlap in every remaining combination.`,
-    );
-  }
-  if (!lines.length) lines.push("Those courses don't share a conflict-free week under these constraints.");
-  return lines.join(" ");
+function EmptyGeneration({
+  help,
+  termLabel,
+  onOptional,
+  degree,
+  semesterID,
+  index,
+  onMove,
+}: {
+  help: ScheduleNoResults;
+  termLabel: string;
+  onOptional: (keys: CourseKey[]) => void;
+  degree: import("@/lib/requirements").DegreePlan | null;
+  semesterID: string | null;
+  index: import("@/lib/catalog-index").CatalogIndex;
+  onMove: (option: MoveOption) => void;
+}) {
+  const blocking = help.blockers.allBlockingCourses.slice(0, 4);
+  return (
+    <div className="grid gap-3">
+      {help.blockers.options.slice(0, 4).map((option) => (
+        <div key={option.id} className="rounded-2xl border border-line p-3">
+          <strong className="text-sm">Works without {ScheduleNoResultsText.list(option.courses)}</strong>
+          <p className="mt-1 text-sm text-muted">{ScheduleNoResultsText.detail(option, help.blockers, termLabel)}</p>
+          <Button className="tiny mt-2" type="button" onClick={() => onOptional(option.courses)}>
+            {option.courses.length === 1 ? "Make optional" : "Make all optional"}
+          </Button>
+        </div>
+      ))}
+      {!degree && blocking.length ? <p className="text-sm text-muted">Import a degree plan to get suggestions for moving a course to another semester.</p> : null}
+      {degree && semesterID && blocking.length ? <SemesterMoves plan={degree} termID={semesterID} blocking={blocking} index={index} onApply={onMove} /> : null}
+    </div>
+  );
 }
 
 function minutesToTime(minutes?: number | null): string {

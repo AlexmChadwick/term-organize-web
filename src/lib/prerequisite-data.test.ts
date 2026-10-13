@@ -2,6 +2,7 @@
  * Port of NEUClassSearchTests/PrerequisiteDataTests.swift.
  * One `it` per Swift `@Test`, with the Swift expected values left intact.
  */
+import { mkdtempSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -41,6 +42,7 @@ import {
   type PrerequisiteListing,
 } from "./degree/suggestions";
 import { parseTitle, titleSimilarity } from "./degree/title-matcher";
+import { CourseInfoRepository, CourseInfoStore, catalogTerms, type CourseInfo, type CourseInfoResult as StoredCourseInfoResult } from "./course-info";
 import { newDegreePlanDraft, prerequisiteStatus, statusOf, unmetSummary, type PrerequisiteStatus } from "./degree-logic";
 import * as degreeLogic from "./degree-logic";
 import { CourseEquivalences, equivalencesFromDeclarations } from "./equivalences";
@@ -793,43 +795,136 @@ interface CourseInfoRepositoryLike {
   cachedLookup(course: CourseKey): Promise<CourseInfoResult | null>;
 }
 
-interface CourseInfoStoreLike {
-  state(course: CourseKey): string;
-  info(course: CourseKey): { prerequisites?: Requisite | null; sourceTerm?: string; isRetired?: boolean | null } | null;
-  load(courses: CourseKey[], indexes: CatalogIndex[]): Promise<void>;
-  requisiteLookup(): (course: CourseKey) => Requisite | null | undefined;
-  readonly version: number;
-  equivalences(plan: DegreePlan | null): CourseEquivalences;
-  equivalenceSuggestions(course: CourseKey, plan?: DegreePlan | null, catalogTitles?: Record<string, string>, alsoComparing?: CourseKey[]): EquivalenceSuggestion[];
-}
+/** Directory shared by the repositories constructed inside `withTempDir`. */
+let scratchDirectory: string | null = null;
+let latestBanner: CourseInfoBanner | null = null;
 
-/** Course-info lookup and its store are not exported. Calls stay undefined and the Swift values fail. */
-function courseInfoRepository(): CourseInfoRepositoryLike | undefined {
-  return (degreeLogic as { CourseInfoRepository?: CourseInfoRepositoryLike }).CourseInfoRepository;
-}
-
-function courseInfoStore(): CourseInfoStoreLike | undefined {
-  return (degreeLogic as { CourseInfoStore?: CourseInfoStoreLike }).CourseInfoStore;
+function registerBanner(banner: CourseInfoBanner): void {
+  latestBanner = banner;
 }
 
 class CourseInfoBanner {
   entryCalls: { key: CourseKey; term: string }[] = [];
   maxInFlight = 0;
-  terms: Term[];
+  maxTermsBack = 8;
+  concurrency = 2;
+  delayMs = 0;
+  directory?: string;
+  termCatalog: Term[];
+  private inFlight = 0;
+  private readonly catalog = new Map<string, Map<string, CourseInfo>>();
+  private readonly failing = new Set<string>();
+
   constructor(readonly clock: TestClock, termListIn: Term[]) {
-    this.terms = termListIn;
+    this.termCatalog = termListIn;
+    registerBanner(this);
   }
-  list(code: string, term: string, _prerequisites?: Requisite | null, _equivalents: CourseKey[] = []) {
-    void code;
-    void term;
+
+  list(code: string, term: string, prerequisites: Requisite | null = null, equivalents: CourseKey[] = [], title?: string) {
+    const course = key(code);
+    const bucket = this.catalog.get(term) ?? new Map<string, CourseInfo>();
+    bucket.set(keyId(course), {
+      key: course,
+      title: title ?? `Title of ${code}`,
+      minCredits: 4,
+      maxCredits: 4,
+      prerequisites,
+      corequisites: null,
+      equivalents,
+      sourceTerm: term,
+      isRetired: null,
+      fetchedAt: 0,
+    });
+    this.catalog.set(term, bucket);
   }
+
   fail(term: string, failing = true) {
-    void term;
-    void failing;
+    if (failing) this.failing.add(term);
+    else this.failing.delete(term);
   }
+
   resetCalls() {
     this.entryCalls = [];
+    this.maxInFlight = 0;
   }
+
+  async terms(): Promise<Term[]> {
+    return this.termCatalog;
+  }
+
+  async catalogEntry(course: CourseKey, term: string): Promise<CourseInfo | null> {
+    this.entryCalls.push({ key: course, term });
+    this.inFlight += 1;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    try {
+      if (this.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      if (this.failing.has(term)) throw new Error(`${term} is down`);
+      const info = this.catalog.get(term)?.get(keyId(course));
+      if (!info) return null;
+      return { ...info, equivalents: [...info.equivalents], fetchedAt: this.clock.now().getTime() };
+    } finally {
+      this.inFlight -= 1;
+    }
+  }
+}
+
+function directoryFor(banner: CourseInfoBanner): string {
+  if (scratchDirectory) return scratchDirectory;
+  if (!banner.directory) banner.directory = mkdtempSync(path.join(tmpdir(), "course-info-"));
+  return banner.directory;
+}
+
+function mapResult(result: StoredCourseInfoResult): CourseInfoResult {
+  if (result.kind === "found") return { type: "found", info: result.info };
+  return { type: result.kind };
+}
+
+function courseInfoRepository(explicit?: CourseInfoBanner): CourseInfoRepositoryLike | undefined {
+  const banner = explicit ?? latestBanner;
+  if (!banner) return undefined;
+  const repo = new CourseInfoRepository({
+    fetcher: banner,
+    directory: directoryFor(banner),
+    now: () => banner.clock.now(),
+    maxTermsBack: banner.maxTermsBack,
+    concurrency: banner.concurrency,
+  });
+  return {
+    catalogTerms: (termsIn, maxBack) => CourseInfoRepository.catalogTerms(termsIn, maxBack),
+    lookupOne: async (course, indexes) => mapResult(await repo.lookupOne(course, indexes)),
+    lookupMany: async (courses, indexes) => {
+      const found = await repo.lookup(courses, indexes);
+      const mapped = new Map<string, CourseInfoResult>();
+      for (const [id, result] of found) mapped.set(id, mapResult(result));
+      return mapped;
+    },
+    cachedLookup: async (course) => {
+      const cached = repo.cachedLookup(course);
+      return cached ? mapResult(cached) : null;
+    },
+  };
+}
+
+function courseInfoStore(explicit?: CourseInfoBanner): CourseInfoStore | undefined {
+  const banner = explicit ?? latestBanner;
+  if (!banner) return undefined;
+  const directory = directoryFor(banner);
+  const repository = new CourseInfoRepository({
+    fetcher: banner,
+    directory,
+    now: () => banner.clock.now(),
+    maxTermsBack: banner.maxTermsBack,
+    concurrency: banner.concurrency,
+  });
+  const offerings = new OfferingHistoryRepository({
+    fetcher: {
+      terms: () => banner.terms(),
+      offeredCourses: async () => [],
+    },
+    filePath: path.join(directory, "offering-history.json"),
+    now: () => banner.clock.now(),
+  });
+  return new CourseInfoStore(repository, offerings);
 }
 
 function foundInfo(result: CourseInfoResult | undefined): FoundCourseInfo | undefined {
@@ -838,9 +933,12 @@ function foundInfo(result: CourseInfoResult | undefined): FoundCourseInfo | unde
 
 async function withTempDir(run: (directory: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(path.join(tmpdir(), "prerequisite-data-"));
+  const previous = scratchDirectory;
+  scratchDirectory = directory;
   try {
     await run(directory);
   } finally {
+    scratchDirectory = previous;
     await rm(directory, { recursive: true, force: true });
   }
 }
@@ -907,13 +1005,10 @@ function sameKeyIds(actual: CourseKey[] | null | undefined, expected: CourseKey[
 
 describe("CourseInfoRepositoryTests", () => {
   it("searchesTheNewestTermThenEarlierFallsAndSprings", () => {
-    const exported = (degreeLogic as { catalogTerms?: (from: Term[], maxBack: number) => string[] }).catalogTerms;
-    const repo = courseInfoRepository();
-    const catalogTerms = exported ?? (repo ? (termsIn: Term[], maxBack: number) => repo.catalogTerms(termsIn, maxBack) : undefined);
-    expect(catalogTerms?.(termList(bannerTermCodes), 3)).toEqual(["202710", "202630", "202610", "202530"]);
-    expect(catalogTerms?.(termList(bannerTermCodes), 0)).toEqual(["202710"]);
-    expect(catalogTerms?.(termList(["202650", "202630", "202610"]), 8)).toEqual(["202650", "202630", "202610"]);
-    expect(catalogTerms?.(termList(["202655", "202632"]), 8)).toEqual([]);
+    expect(catalogTerms(termList(bannerTermCodes), 3)).toEqual(["202710", "202630", "202610", "202530"]);
+    expect(catalogTerms(termList(bannerTermCodes), 0)).toEqual(["202710"]);
+    expect(catalogTerms(termList(["202650", "202630", "202610"]), 8)).toEqual(["202650", "202630", "202610"]);
+    expect(catalogTerms(termList(["202655", "202632"]), 8)).toEqual([]);
   });
 
   it("looksInTheLoadedCatalogsFirst", async () => {
@@ -978,7 +1073,8 @@ describe("CourseInfoRepositoryTests", () => {
       const stale = foundInfo(third ? await third.lookupOne(key("CS 3386")) : undefined);
       expect(stale?.prerequisites).toEqual(requisite("CS 2386"));
       banner.list("CS 3386", "202710", requisite("CS 2000"));
-      const fresh = foundInfo(courseInfoRepository() ? await courseInfoRepository()!.lookupOne(key("CS 3386")) : undefined);
+      const refreshed = courseInfoRepository(banner);
+      const fresh = foundInfo(refreshed ? await refreshed.lookupOne(key("CS 3386")) : undefined);
       expect(fresh?.prerequisites).toEqual(requisite("CS 2000"));
     });
   });
@@ -987,6 +1083,7 @@ describe("CourseInfoRepositoryTests", () => {
     await withTempDir(async () => {
       const clock = new TestClock();
       const banner = new CourseInfoBanner(clock, termList(bannerTermCodes));
+      banner.maxTermsBack = 3;
       const repo = courseInfoRepository();
       const first = repo ? await repo.lookupOne(key("CS 2963")) : undefined;
       expect(first?.type).toBe("notFound");
@@ -1042,6 +1139,7 @@ describe("CourseInfoRepositoryTests", () => {
   it("fewCoursesAreLookedUpAtATime", async () => {
     const clock = new TestClock();
     const banner = new CourseInfoBanner(clock, termList(bannerTermCodes));
+    banner.delayMs = 20;
     const codes = [1, 2, 3, 4, 5, 6].map((n) => `CS 30${10 + n}`);
     for (const code of codes) banner.list(code, "202710");
     const repo = courseInfoRepository();
@@ -1546,7 +1644,7 @@ describe("EquivalenceSuggestionStoreTests", () => {
   it("suggestsTheStudentsCourseWithASimilarTitle", async () => {
     const clock = new TestClock();
     const banner = new CourseInfoBanner(clock, termList(bannerTermCodes));
-    banner.list("IS 4300", "202530");
+    banner.list("IS 4300", "202530", null, [], "Human Computer Interaction");
     const store = courseInfoStore();
     const plan = emptyPlan();
     plan.completed = [
@@ -1575,8 +1673,8 @@ describe("EquivalenceSuggestionStoreTests", () => {
   it("titlesComeFromTheBestSource", async () => {
     const clock = new TestClock();
     const banner = new CourseInfoBanner(clock, termList(bannerTermCodes));
-    banner.list("IS 4300", "202530");
-    banner.list("CS 2484", "202710");
+    banner.list("IS 4300", "202530", null, [], "Human Computer Interaction");
+    banner.list("CS 2484", "202710", null, [], "Principles of Human-Computer Interaction (Banner)");
     const store = courseInfoStore();
     const plan = emptyPlan();
     plan.completed = [plannedCourse("CS 2484", 4, "Principles of Human-Computer I")];
@@ -1589,7 +1687,7 @@ describe("EquivalenceSuggestionStoreTests", () => {
   it("currentCoursesGetNoTitleSuggestions", async () => {
     const clock = new TestClock();
     const banner = new CourseInfoBanner(clock, termList(bannerTermCodes));
-    banner.list("IS 4300", "202710");
+    banner.list("IS 4300", "202710", null, [], "Human Computer Interaction");
     const store = courseInfoStore();
     const plan = emptyPlan();
     plan.completed = [plannedCourse("CS 2484", 4, "Principles of Human-Computer Interaction")];

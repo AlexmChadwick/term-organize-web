@@ -248,3 +248,330 @@ export function interpretPreferences(description: string, base: SchedulePreferen
   draft.notes = summary;
   return { preferences, draft, summary };
 }
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+export interface ScheduleDraftBlockedTime {
+  label: string;
+  days: string[];
+  start: string;
+  end: string;
+}
+
+/** What the model understood. Every field is optional: only what the student said comes back. */
+export interface SchedulePreferencesDraft {
+  preferredTimes?: TimeBand[];
+  avoidedTimes?: TimeBand[];
+  earliestStart?: string;
+  latestEnd?: string;
+  timeLimitsAreFlexible?: boolean;
+  daysOff?: string[];
+  daysOffAreRequired?: boolean;
+  layout?: "fewerDays" | "spreadOut";
+  maxClassesPerDay?: number;
+  maxHoursPerDay?: number;
+  breaks?: "avoidBackToBack" | "timeToWalk";
+  wantsLunchBreak?: boolean;
+  blockedTimes?: ScheduleDraftBlockedTime[];
+  format?: "inPerson" | "online" | "hybrid";
+  seats?: "openSeatsOnly" | "waitlistOK";
+}
+
+/** The most blocked times taken from one description. */
+export const MAX_DRAFT_BLOCKED_TIMES = 8;
+
+export type AssistantAvailability = "available" | "deviceNotEligible" | "notEnabled" | "notReady" | "unsupportedLanguage" | "unavailable";
+
+export type AssistantFailure =
+  | { kind: "emptyDescription" }
+  | { kind: "descriptionTooLong" }
+  | { kind: "guardrail" }
+  | { kind: "contextTooLarge" }
+  | { kind: "unsupportedLanguage" }
+  | { kind: "busy" }
+  | { kind: "timedOut" }
+  | { kind: "nothingFound" }
+  | { kind: "failed"; detail: string }
+  | { kind: "unavailable"; availability: AssistantAvailability };
+
+/**
+ * Reads a time the way the model writes it (`18:00`, `6:30 pm`, `6pm`, `1800`, `noon`)
+ * into minutes after midnight. `24:00` and `midnight` are the end of the day.
+ */
+export function minutesFromClockText(text: string): number | null {
+  let s = text.toLowerCase().replace(/[\s.]/g, "");
+  if (s === "noon") return 12 * 60;
+  if (s === "midnight") return 24 * 60;
+  let meridiem: boolean | null = null;
+  if (s.endsWith("am")) {
+    meridiem = false;
+    s = s.slice(0, -2);
+  } else if (s.endsWith("pm")) {
+    meridiem = true;
+    s = s.slice(0, -2);
+  }
+  if (!s) return null;
+  let hour: number;
+  let minute = 0;
+  const colon = s.indexOf(":");
+  if (colon >= 0) {
+    if (!/^\d+$/.test(s.slice(0, colon)) || !/^\d+$/.test(s.slice(colon + 1))) return null;
+    hour = Number(s.slice(0, colon));
+    minute = Number(s.slice(colon + 1));
+  } else if (s.length >= 3 && s.length <= 4 && /^\d+$/.test(s)) {
+    const number = Number(s);
+    hour = Math.floor(number / 100);
+    minute = number % 100;
+  } else if (/^\d+$/.test(s)) {
+    hour = Number(s);
+  } else {
+    return null;
+  }
+  if (hour < 0 || hour > 24 || minute < 0 || minute >= 60) return null;
+  if (meridiem != null) {
+    if (hour < 1 || hour > 12) return null;
+    if (meridiem && hour < 12) hour += 12;
+    if (!meridiem && hour === 12) hour = 0;
+  }
+  const total = hour * 60 + minute;
+  return total <= 24 * 60 ? total : null;
+}
+
+export function draftIsEmpty(draft: SchedulePreferencesDraft): boolean {
+  return (
+    !(draft.preferredTimes ?? []).length &&
+    !(draft.avoidedTimes ?? []).length &&
+    draft.earliestStart == null &&
+    draft.latestEnd == null &&
+    !(draft.daysOff ?? []).length &&
+    draft.layout == null &&
+    draft.maxClassesPerDay == null &&
+    draft.maxHoursPerDay == null &&
+    draft.breaks == null &&
+    draft.wantsLunchBreak !== true &&
+    !(draft.blockedTimes ?? []).length &&
+    draft.format == null &&
+    draft.seats == null
+  );
+}
+
+export function draftFilledCount(draft: SchedulePreferencesDraft): number {
+  let n = 0;
+  if ((draft.preferredTimes ?? []).length) n += 1;
+  if ((draft.avoidedTimes ?? []).length) n += 1;
+  if (draft.earliestStart != null) n += 1;
+  if (draft.latestEnd != null) n += 1;
+  if ((draft.daysOff ?? []).length) n += 1;
+  if (draft.layout != null) n += 1;
+  if (draft.maxClassesPerDay != null || draft.maxHoursPerDay != null) n += 1;
+  if (draft.breaks != null) n += 1;
+  if (draft.wantsLunchBreak === true) n += 1;
+  n += (draft.blockedTimes ?? []).length;
+  if (draft.format != null) n += 1;
+  if (draft.seats != null) n += 1;
+  return n;
+}
+
+function weekdayMask(days: readonly string[]): number {
+  let mask = 0;
+  for (const day of days) {
+    const index = WEEKDAY_INDEX[day];
+    if (index != null) mask |= 1 << index;
+  }
+  return mask;
+}
+
+/**
+ * `base` with this draft's wishes applied. Fields the draft leaves out keep their values.
+ * Times that can't be read, blocks without days, and values out of range are dropped.
+ */
+export function applyDraft(draft: SchedulePreferencesDraft, base: SchedulePreferences): SchedulePreferences {
+  let p: SchedulePreferences = {
+    ...base,
+    timeOfDay: { ...base.timeOfDay },
+    blockedTimes: base.blockedTimes.map((block) => ({ ...block })),
+    preferredInstructors: [...base.preferredInstructors],
+    avoidedInstructors: [...base.avoidedInstructors],
+    earliestStart: base.earliestStart ? { ...base.earliestStart } : base.earliestStart,
+    latestEnd: base.latestEnd ? { ...base.latestEnd } : base.latestEnd,
+    lunch: base.lunch ? { ...base.lunch } : base.lunch,
+    creditTarget: base.creditTarget ? { ...base.creditTarget } : base.creditTarget,
+  };
+  for (const time of draft.preferredTimes ?? []) p = setBandPreference(p, time, "prefer");
+  for (const time of draft.avoidedTimes ?? []) p = setBandPreference(p, time, "avoid");
+
+  const strength = draft.timeLimitsAreFlexible === true ? "preferred" : "required";
+  const earliest = draft.earliestStart != null ? minutesFromClockText(draft.earliestStart) : null;
+  if (earliest != null && earliest < 24 * 60) p.earliestStart = { minutes: earliest, strength };
+  const latest = draft.latestEnd != null ? minutesFromClockText(draft.latestEnd) : null;
+  if (latest != null && latest > (p.earliestStart?.minutes ?? 0)) p.latestEnd = { minutes: latest, strength };
+
+  if ((draft.daysOff ?? []).length) {
+    p.daysOff = weekdayMask(draft.daysOff ?? []);
+    p.daysOffStrength = draft.daysOffAreRequired === true ? "required" : "preferred";
+  }
+  if (draft.layout === "fewerDays" || draft.layout === "spreadOut") p.dayLayout = draft.layout;
+  if (draft.maxClassesPerDay != null && draft.maxClassesPerDay >= 1 && draft.maxClassesPerDay <= 8) p.maxClassesPerDay = draft.maxClassesPerDay;
+  if (draft.maxHoursPerDay != null && draft.maxHoursPerDay >= 1 && draft.maxHoursPerDay <= 12) p.maxMinutesPerDay = draft.maxHoursPerDay * 60;
+  if (draft.breaks === "avoidBackToBack") p.breaks = "avoidBackToBack";
+  if (draft.breaks === "timeToWalk") {
+    p.breaks = "atLeast";
+    p.minimumBreakMinutes = 15;
+    p.minimumBreakStrength = "preferred";
+  }
+  if (draft.wantsLunchBreak === true && p.lunch == null) p.lunch = { start: 11 * 60 + 30, end: 14 * 60, minutes: 30 };
+  for (const block of (draft.blockedTimes ?? []).slice(0, MAX_DRAFT_BLOCKED_TIMES)) {
+    const start = minutesFromClockText(block.start);
+    let end = minutesFromClockText(block.end);
+    if (start == null || end == null) continue;
+    if (end <= start && end < 12 * 60 && end + 12 * 60 <= 24 * 60) end += 12 * 60;
+    const days = weekdayMask(block.days);
+    if (days === 0 || end <= start || start < 0 || end > 24 * 60) continue;
+    const label = block.label.trim().toLowerCase();
+    const duplicate = p.blockedTimes.some((existing) => existing.label.toLowerCase() === label && existing.days === days && existing.start === start && existing.end === end);
+    if (duplicate) continue;
+    p.blockedTimes.push({
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `block-${p.blockedTimes.length + 1}`,
+      label: block.label,
+      days,
+      start,
+      end,
+      strength: "required",
+      isEnabled: true,
+    });
+  }
+  if (draft.format) p.format = draft.format;
+  if (draft.seats === "openSeatsOnly") p.seats = "openOnly";
+  if (draft.seats === "waitlistOK") p.seats = "waitlistOK";
+  return normalizePreferences(p);
+}
+
+const GROUND_CUES = {
+  format: ["online", "remote", "virtual", "zoom", "in person", "in-person", "on campus", "on-campus", "hybrid", "face to face", "face-to-face"],
+  seats: ["seat", "waitlist", "wait list", "wait-list", "capacity", "full class", "full section", "open section", "open class", "closed class"],
+  breaks: ["back to back", "back-to-back", "walk", "between class", "between building", "break between", "gap", "rush", "far apart", "time to get", "travel"],
+  lunch: ["lunch", "meal", " eat "],
+  perDay: ["per day", "a day", "each day", "every day", "in a day", "in one day", "daily", "same day"],
+  layout: ["few days", "fewer days", "fewest days", "spread", "evenly", "compact", "long weekend", "bunch", "pack ", "cram", "consolidat", "every day", "each day", "all week", "days a week", "days per week", "days on campus"],
+  timeLimit: ["before", "after", "earlier than", "later than", "start", "finish", "end by", "done by", "out by", "no classes", "nothing"],
+  weekday: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+  off: [" off", "free", "no class", "without class", "skip", "nothing on"],
+  noClassesOn: ["no class on", "no classes on", "nothing on"],
+  firm: ["must", "have to", "has to", "need to", "i need", "can't", "can’t", "cannot", "can not", "no way", "never", "always", "required", "i work", "my job", "my shift", "shifts", "only available"],
+  soft: ["ideally", "prefer", "if possible", "if i can", "if it's possible", "would like", "i'd like", "i’d like", "id like", "rather", "hopefully", "try to", "nice if", "would be nice", "wish"],
+};
+
+const QUANTITY_WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "twelve", "couple", "no more than", "at most", "max"];
+
+function mentionsCue(text: string, cues: readonly string[]): boolean {
+  return cues.some((cue) => text.includes(cue));
+}
+
+function draftClauses(text: string): string[] {
+  let parts = [text];
+  for (const separator of [",", ";", ".", "\n", " and ", " but "]) {
+    parts = parts.flatMap((part) => part.split(separator));
+  }
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+function hasQuantity(text: string): boolean {
+  return /\d/.test(text) || QUANTITY_WORDS.some((word) => text.includes(word));
+}
+
+const ENGLISH_WORDS = new Set(
+  "a an the i you we they my no not before after class classes day off friday fridays monday mondays tuesday tuesdays wednesday thursday thursdays work like ideally nothing more than hours hour each per and or to of in on for with have has can cannot lunch break robotics club".split(" "),
+);
+
+/**
+ * Whether `text` is English, the language the grounding cues are written in.
+ * Accented text with too few English words is left to the model (NLLanguageRecognizer's gate).
+ */
+export function isEnglish(text: string): boolean {
+  const lower = text.toLowerCase();
+  const words = lower.split(/[^a-z0-9'’]+/).filter(Boolean);
+  if (!words.length) return true;
+  let english = 0;
+  for (const word of words) if (ENGLISH_WORDS.has(word.replace(/['’]/g, ""))) english += 1;
+  const accented = /[áéíóúñü¿¡àèìòùâêîôûäëïöüç]/.test(lower);
+  const share = english / words.length;
+  if (accented && share < 0.4) return false;
+  return share >= 0.4 || !accented;
+}
+
+/** Drops answers the student's own words give no sign of. Non-English descriptions are left alone. */
+export function groundDraft(draft: SchedulePreferencesDraft, description: string): SchedulePreferencesDraft {
+  if (!isEnglish(description)) return draft;
+  const text = ` ${description.toLowerCase()} `;
+  const copy: SchedulePreferencesDraft = {
+    ...draft,
+    preferredTimes: draft.preferredTimes ? [...draft.preferredTimes] : undefined,
+    avoidedTimes: draft.avoidedTimes ? [...draft.avoidedTimes] : undefined,
+    daysOff: draft.daysOff ? [...draft.daysOff] : undefined,
+    blockedTimes: draft.blockedTimes?.map((block) => ({ ...block, days: [...block.days] })),
+  };
+  if (!mentionsCue(text, GROUND_CUES.format)) copy.format = undefined;
+  if (!mentionsCue(text, GROUND_CUES.seats)) copy.seats = undefined;
+  if (!mentionsCue(text, GROUND_CUES.breaks)) copy.breaks = undefined;
+  if (!mentionsCue(text, GROUND_CUES.lunch)) copy.wantsLunchBreak = undefined;
+  if (!mentionsCue(text, GROUND_CUES.layout)) copy.layout = undefined;
+  const perDay = mentionsCue(text, GROUND_CUES.perDay) && hasQuantity(text);
+  if (!(perDay && text.includes("class"))) copy.maxClassesPerDay = undefined;
+  if (!(perDay && text.includes("hour"))) copy.maxHoursPerDay = undefined;
+  const clauses = draftClauses(text);
+  const limitClauses = clauses.filter((clause) => mentionsCue(clause, GROUND_CUES.timeLimit));
+  copy.timeLimitsAreFlexible = limitClauses.length > 0 && limitClauses.every((clause) => mentionsCue(clause, GROUND_CUES.soft) && !mentionsCue(clause, GROUND_CUES.firm));
+  const offClauses = clauses.filter((clause) => mentionsCue(clause, GROUND_CUES.weekday) && mentionsCue(clause, GROUND_CUES.off));
+  copy.daysOffAreRequired = offClauses.some((clause) => mentionsCue(clause, GROUND_CUES.firm) || mentionsCue(clause, GROUND_CUES.noClassesOn));
+  return copy;
+}
+
+export function assistantAvailabilityNote(state: AssistantAvailability): string | null {
+  switch (state) {
+    case "available":
+      return null;
+    case "deviceNotEligible":
+      return "Apple Intelligence isn’t available on this device, but the survey below still works.";
+    case "notEnabled":
+      return "Turn on Apple Intelligence in Settings to describe your week in your own words. The survey below works without it.";
+    case "notReady":
+      return "Apple Intelligence isn’t ready yet. Try again later; the survey below works in the meantime.";
+    case "unsupportedLanguage":
+      return "Apple Intelligence doesn’t support your language yet, but the survey below still works.";
+    case "unavailable":
+      return "Apple Intelligence isn’t available right now, but the survey below still works.";
+  }
+}
+
+export function assistantFailureMessage(failure: AssistantFailure): string {
+  switch (failure.kind) {
+    case "unavailable":
+      return assistantAvailabilityNote(failure.availability) ?? "Apple Intelligence isn’t available right now.";
+    case "emptyDescription":
+      return "Describe the schedule you want first.";
+    case "descriptionTooLong":
+      return "That’s a lot to read at once. Try describing the most important things in a few sentences.";
+    case "guardrail":
+      return "Apple Intelligence couldn’t use that description. Try rephrasing it, or fill in the survey yourself.";
+    case "contextTooLarge":
+      return "That description is too long for Apple Intelligence. Shorten it, or fill in the survey yourself.";
+    case "unsupportedLanguage":
+      return "Apple Intelligence can’t read that language yet. Try English, or fill in the survey yourself.";
+    case "busy":
+      return "Apple Intelligence is busy right now. Try again in a moment.";
+    case "timedOut":
+      return "Apple Intelligence took too long. Try a shorter description, or fill in the survey yourself.";
+    case "nothingFound":
+      return "Couldn’t find any schedule wishes in that. Try mentioning times, days or commitments, like “no classes before 10” or “work Tuesdays 1–5”.";
+    case "failed":
+      return "Something went wrong reading that. Try again, or fill in the survey yourself.";
+  }
+}

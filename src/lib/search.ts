@@ -326,3 +326,18 @@ export function searchCatalog(
   response.results = sortResults(scored, sort);
   return response;
 }
+
+export {
+  HomeQuickSearch,
+  ProfessorPage,
+  SearchDayPreset,
+  SearchExampleCache,
+  SearchFilterTitles,
+  SearchTimeOfDay,
+  browseLevelNoun,
+  browseLevelTitle,
+  browseSummaryText,
+  courseStatusSymbol,
+  degreePlanStandingSpoken,
+  degreePlanStandingText,
+} from "./catalog-support";

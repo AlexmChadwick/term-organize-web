@@ -7,8 +7,13 @@
  * Web port of Core/Models/CourseEquivalences.swift. Groups are symmetric and transitive.
  */
 
+import type { CatalogIndex } from "./catalog-index";
 import type { CourseKey } from "./models";
 import { compareCourseKeys, keyId, sameKey } from "./models";
+
+function normalizeTitle(title: string): string {
+  return title.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+}
 
 class DisjointSets {
   private parent = new Map<string, string>();
@@ -81,6 +86,37 @@ export class CourseEquivalences {
 
   static fromPairs(pairs: [CourseKey, CourseKey][]): CourseEquivalences {
     return new CourseEquivalences(pairs.map(([a, b]) => [a, b]));
+  }
+
+  /**
+   * Same course listed under several subjects. Combined undergraduate and graduate sections
+   * and special topics are cross-listed too, and are not interchangeable.
+   * Port of `CourseEquivalences.init(crossListedIn:)`.
+   */
+  static crossListedIn(index: CatalogIndex): CourseEquivalences {
+    const pairs: [CourseKey, CourseKey][] = [];
+    const seen = new Set<string>();
+    for (const section of index.catalog.sections) {
+      if (!section.crossListCRNs.length) continue;
+      const courseKey = { subject: section.subject, number: section.number };
+      if (index.course(courseKey)?.specialTopics) continue;
+      for (const crn of section.crossListCRNs) {
+        const other = index.sectionByCRN(crn);
+        if (!other) continue;
+        const otherKey = { subject: other.subject, number: other.number };
+        if (otherKey.number !== courseKey.number || otherKey.subject === courseKey.subject) continue;
+        if (index.course(otherKey)?.specialTopics) continue;
+        const title = normalizeTitle(index.course(courseKey)?.title || section.title);
+        const otherTitle = normalizeTitle(index.course(otherKey)?.title || other.title);
+        if (!title || title !== otherTitle) continue;
+        const [first, second] = compareCourseKeys(courseKey, otherKey) <= 0 ? [courseKey, otherKey] : [otherKey, courseKey];
+        const id = `${keyId(first)}|${keyId(second)}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        pairs.push([first, second]);
+      }
+    }
+    return CourseEquivalences.fromPairs(pairs);
   }
 
   static none(): CourseEquivalences {

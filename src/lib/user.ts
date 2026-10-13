@@ -9,7 +9,7 @@
  */
 
 import type { CourseKey } from "./models";
-import { COURSE_PALETTE, keyId } from "./models";
+import { COURSE_PALETTE, keyId, sameKey } from "./models";
 import type { SchedulePreferences } from "./preferences";
 import type { DegreePlan } from "./requirements";
 
@@ -163,6 +163,30 @@ export function saveUserData(data: UserData): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
+/**
+ * Degree-plan decode matching `DegreePlan.init(from:)`.
+ * A present `completed` or `terms` value that is not an array fails the whole plan
+ * (the entry is skipped). Missing substitutions and equivalences become empty lists.
+ * A missing catalog year stays unset.
+ */
+export function decodeDegreePlan(raw: unknown): DegreePlan | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const plan = { ...(raw as DegreePlan) };
+  if (plan.completed != null && !Array.isArray(plan.completed)) return null;
+  if (plan.terms != null && !Array.isArray(plan.terms)) return null;
+  if (plan.catalogYear != null && typeof plan.catalogYear !== "number") return null;
+  if (typeof plan.name !== "string") plan.name = "Degree Plan";
+  if (typeof plan.id !== "string") plan.id = newId();
+  if (!Array.isArray(plan.completed)) plan.completed = [];
+  if (!Array.isArray(plan.terms)) plan.terms = [];
+  if (typeof plan.isPrimary !== "boolean") plan.isPrimary = false;
+  if (typeof plan.createdAt !== "number") plan.createdAt = Date.now() / 1000;
+  if (typeof plan.updatedAt !== "number") plan.updatedAt = Date.now() / 1000;
+  if (!Array.isArray(plan.substitutions)) plan.substitutions = [];
+  if (!Array.isArray(plan.courseEquivalences)) plan.courseEquivalences = [];
+  return plan;
+}
+
 /** Tolerant merge: unknown or broken entries are skipped. */
 export function mergeUserData(raw: unknown): UserData {
   const base = emptyUserData();
@@ -177,7 +201,10 @@ export function mergeUserData(raw: unknown): UserData {
   base.plans = arrayOf(o.plans);
   base.watchlist = arrayOf(o.watchlist);
   base.searchHistory = arrayOf(o.searchHistory).filter((s) => typeof s === "string");
-  base.degreePlans = arrayOf(o.degreePlans);
+  base.degreePlans = arrayOf<unknown>(o.degreePlans).flatMap((plan) => {
+    const decoded = decodeDegreePlan(plan);
+    return decoded ? [decoded] : [];
+  });
   return base;
 }
 
@@ -191,4 +218,11 @@ export function keepOnePrimaryPlan(plans: SchedulePlan[], termCode: string, prim
 
 export function keepOnePrimaryDegree(plans: DegreePlan[], primaryId: string): DegreePlan[] {
   return plans.map((p) => ({ ...p, isPrimary: p.id === primaryId }));
+}
+
+/** Whether a plan for this term holds the course, or the given section when `crn` is set. */
+export function courseIsInSchedule(data: UserData, termCode: string, key: CourseKey, crn?: string): boolean {
+  const termPlans = data.plans.filter((plan) => plan.termCode === termCode);
+  if (crn != null) return termPlans.some((plan) => plan.selectedCRNs.includes(crn));
+  return termPlans.some((plan) => plan.courses.some((course) => sameKey(course.key, key)));
 }

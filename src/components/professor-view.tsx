@@ -2,7 +2,7 @@
 
 import { WeekCalendar, blocksFromSections, courseHref, sectionHref } from "@/components/bits";
 import { useApp } from "@/lib/app-state";
-import { instructorDisplayName, keyId, scheduleSummary } from "@/lib/models";
+import { courseColorAt, distinctCourseColorIndexes, instructorDisplayName, keyId, scheduleSummary } from "@/lib/models";
 import Link from "next/link";
 
 export function ProfessorView({ name }: { name: string }) {
@@ -24,6 +24,10 @@ export function ProfessorView({ name }: { name: string }) {
     const section = index.sectionByCRN(crn);
     return section ? [section] : [];
   });
+  const colors = distinctCourseColorIndexes(person.courseKeys);
+  function colorFor(section: { subject: string; number: string }) {
+    return colors.get(keyId({ subject: section.subject, number: section.number })) ?? 0;
+  }
   return (
     <div className="grid gap-4">
       <header>
@@ -38,7 +42,7 @@ export function ProfessorView({ name }: { name: string }) {
       <section className="card overflow-x-auto p-3">
         <h2 className="mb-2 px-2 font-semibold">Teaching calendar</h2>
         <WeekCalendar
-          blocks={blocksFromSections(sections, () => 0, termCode)}
+          blocks={blocksFromSections(sections, colorFor, termCode)}
           startHour={user.preferences.calendarStartHour}
           endHour={user.preferences.calendarEndHour}
           showWeekends={user.preferences.showWeekends}
@@ -48,6 +52,7 @@ export function ProfessorView({ name }: { name: string }) {
         {person.courseKeys.map((key) => (
           <li key={keyId(key)} className="card p-4">
             <Link className="font-semibold underline" href={courseHref(termCode, key)}>
+              <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ background: courseColorAt(colorFor(key)).stroke }} />
               {keyId(key)} {index.course(key)?.title}
             </Link>
             <ul className="mt-2 text-sm text-muted">

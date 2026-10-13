@@ -44,7 +44,6 @@ export function Shell({ children }: { children: ReactNode }) {
             {terms.map((term) => (
               <option key={term.code} value={term.code}>
                 {term.name}
-                {term.bundled ? "" : " · live only"}
               </option>
             ))}
           </select>

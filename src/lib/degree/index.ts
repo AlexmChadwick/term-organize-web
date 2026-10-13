@@ -252,6 +252,12 @@ export {
 } from "@/lib/degree/substitutions";
 
 export {
+  CourseAttributeRepository,
+  type AttributeFetching,
+  type AttributeLookup,
+} from "@/lib/degree/attributes";
+
+export {
   MAX_REORDER_SUGGESTIONS,
   OfferingHistory,
   applyReorderSuggestion,

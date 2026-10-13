@@ -3,7 +3,7 @@
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
 import type { Course, CourseKey, CourseSection, Term, TermCatalog } from "@/lib/models";
-import { courseKeyOf, keyId, sameKey, termName } from "@/lib/models";
+import { catalogIsNewer, courseKeyOf, keyId, sameKey, termName } from "@/lib/models";
 import { emptyPreferences } from "@/lib/preferences";
 import {
   emptyPlanFilters,
@@ -43,8 +43,10 @@ interface AppContextValue {
   setTermCode: (code: string) => void;
   terms: TermOption[];
   index: CatalogIndex | null;
-  catalogStatus: "loading" | "ready" | "missing" | "error";
+  catalogStatus: "loading" | "building" | "ready" | "missing" | "error";
+  catalogDetail: string | null;
   catalogError: string | null;
+  rebuildTerm: () => Promise<void>;
   plan: SchedulePlan | null;
   ensurePlan: () => SchedulePlan;
   updatePlan: (id: string, fn: (plan: SchedulePlan) => SchedulePlan) => void;
@@ -101,6 +103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeChoice>("system");
   const [index, setIndex] = useState<CatalogIndex | null>(null);
   const [catalogStatus, setCatalogStatus] = useState<AppContextValue["catalogStatus"]>("loading");
+  const [catalogDetail, setCatalogDetail] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [terms, setTerms] = useState<TermOption[]>([{ code: BUNDLED, name: "Fall 2026", bundled: true }]);
 
@@ -129,24 +132,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!ready) return;
     let cancelled = false;
     setCatalogStatus("loading");
+    setCatalogDetail(null);
     setCatalogError(null);
     setIndex(null);
     (async () => {
       try {
         const cached = await idbGetCatalog(termCode);
-        const catalog = cached ?? (await fetchCatalog(termCode));
         if (cancelled) return;
-        if (!catalog) {
-          setCatalogStatus("missing");
+        if (cached) {
+          setIndex(CatalogIndex.build(cached));
+          setCatalogStatus("ready");
+        }
+        let remote: TermCatalog | null = null;
+        try {
+          remote = await fetchCatalog(termCode);
+        } catch (error) {
+          if (!cached) throw error;
+        }
+        if (cancelled) return;
+        if (remote && (!cached || catalogIsNewer(remote, cached))) {
+          setIndex(CatalogIndex.build(remote));
+          setCatalogStatus("ready");
+          void idbSetCatalog(termCode, remote);
           return;
         }
-        if (!cached) void idbSetCatalog(termCode, catalog);
-        setIndex(CatalogIndex.build(catalog));
-        setCatalogStatus("ready");
+        if (cached || remote) return;
+        await installBuiltCatalog(termCode, cancelledCheck);
       } catch (error) {
         if (cancelled) return;
         setCatalogStatus("error");
         setCatalogError(error instanceof Error ? error.message : "Couldn't load the catalog.");
+      }
+
+      function cancelledCheck() {
+        return cancelled;
+      }
+
+      async function installBuiltCatalog(code: string, isCancelled: () => boolean) {
+        setCatalogStatus("building");
+        setCatalogDetail("Downloading every section of this term from Banner…");
+        const res = await fetch(`/api/catalog/${code}`, { method: "POST" });
+        const body = (await res.json().catch(() => ({}))) as TermCatalog & { error?: string };
+        if (isCancelled()) return;
+        if (!res.ok) throw new Error(body.error ?? "Couldn't download that term.");
+        await idbSetCatalog(code, body);
+        if (isCancelled()) return;
+        setIndex(CatalogIndex.build(body));
+        setCatalogStatus("ready");
+        setCatalogDetail(null);
       }
     })();
     return () => {
@@ -188,6 +221,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setTermCode = useCallback((code: string) => {
     setUser((prev) => ({ ...prev, preferences: { ...prev.preferences, selectedTermCode: code } }));
   }, []);
+
+  const rebuildTerm = useCallback(async () => {
+    setCatalogStatus("building");
+    setCatalogDetail("Downloading every section of this term from Banner…");
+    setCatalogError(null);
+    try {
+      const res = await fetch(`/api/catalog/${termCode}`, { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as TermCatalog & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Couldn't download that term.");
+      await idbSetCatalog(termCode, body);
+      setIndex(CatalogIndex.build(body));
+      setCatalogStatus("ready");
+      setCatalogDetail(null);
+    } catch (error) {
+      setCatalogStatus("error");
+      setCatalogError(error instanceof Error ? error.message : "Couldn't download that term.");
+    }
+  }, [termCode]);
 
   const plan = useMemo(
     () => user.plans.find((item) => item.termCode === termCode && item.isPrimary) ?? user.plans.find((item) => item.termCode === termCode) ?? null,
@@ -376,7 +427,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     terms,
     index,
     catalogStatus,
+    catalogDetail,
     catalogError,
+    rebuildTerm,
     plan,
     ensurePlan,
     updatePlan,

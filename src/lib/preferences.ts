@@ -8,7 +8,7 @@
  */
 
 import type { CourseSection, DaySet } from "./models";
-import { sectionIsOnline } from "./models";
+import { instructorDisplayName, sectionIsOnline } from "./models";
 
 export type PreferenceStrength = "preferred" | "required";
 
@@ -293,6 +293,358 @@ export type PreferenceField =
   | "seats"
   | "instructors"
   | "creditTarget";
+
+/** Swift `hasWishes`: a wish is in force. A switched-off block does not count. */
+export function hasWishes(p: SchedulePreferences): boolean {
+  return preferenceActiveCount(p) > 0;
+}
+
+const TIME_PREFERENCES = new Set<TimePreference>(["avoid", "okay", "prefer"]);
+const STRENGTHS = new Set<PreferenceStrength>(["preferred", "required"]);
+const DAY_LAYOUTS = new Set<DayLayout>(["noPreference", "fewerDays", "spreadOut"]);
+const GAP_PREFERENCES = new Set<GapPreference>(["compact", "noPreference", "fine"]);
+const BREAK_PREFERENCES = new Set<BreakPreference>(["fine", "avoidBackToBack", "atLeast"]);
+const FORMAT_PREFERENCES = new Set<FormatPreference>(["noPreference", "inPerson", "hybrid", "online"]);
+const SEAT_POLICIES = new Set<SeatPolicy>(["any", "waitlistOK", "openOnly"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function decodeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function decodeEnum<T extends string>(value: unknown, allowed: Set<T>): T | null {
+  return typeof value === "string" && allowed.has(value as T) ? (value as T) : null;
+}
+
+/** Swift `DaySet` is a `UInt8` masked to the seven weekdays. */
+function decodeDaySet(value: unknown): number | null {
+  const raw = decodeInt(value);
+  if (raw == null || raw < 0 || raw > 255) return null;
+  return raw & 0x7f;
+}
+
+function newBlockId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `block-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function decodeTimeLimit(value: unknown): TimeLimit | null {
+  if (!isRecord(value)) return null;
+  const minutes = decodeInt(value.minutes);
+  if (minutes == null) return null;
+  return { minutes, strength: decodeEnum(value.strength, STRENGTHS) ?? "required" };
+}
+
+function decodeLunch(value: unknown): LunchBreak | null {
+  if (!isRecord(value)) return null;
+  return {
+    start: decodeInt(value.start) ?? 11 * 60 + 30,
+    end: decodeInt(value.end) ?? 14 * 60,
+    minutes: decodeInt(value.minutes) ?? 30,
+  };
+}
+
+function decodeBlockedTime(value: unknown): BlockedTime | null {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" && value.id.length > 0 ? value.id : newBlockId();
+  return {
+    id,
+    label: typeof value.label === "string" ? value.label : "",
+    days: decodeDaySet(value.days) ?? 0,
+    start: decodeInt(value.start) ?? 0,
+    end: decodeInt(value.end) ?? 0,
+    strength: decodeEnum(value.strength, STRENGTHS) ?? "required",
+    isEnabled: typeof value.isEnabled === "boolean" ? value.isEnabled : true,
+  };
+}
+
+function decodeStringList(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return null;
+  return value;
+}
+
+function decodeCreditTarget(value: unknown): CreditTarget | null {
+  if (!isRecord(value)) return null;
+  const lower = decodeInt(value.lower);
+  const upper = decodeInt(value.upper);
+  if (lower == null || upper == null) return null;
+  return { lower, upper: Math.max(lower, upper) };
+}
+
+/**
+ * Swift `SchedulePreferences.init(from:)`. Missing, unknown, and damaged values fall back
+ * to the defaults. A value that is not an object at all decodes as no preferences.
+ */
+export function decodeSchedulePreferences(value: unknown): SchedulePreferences {
+  const p = emptyPreferences();
+  if (!isRecord(value)) return p;
+  if (isRecord(value.timeOfDay)) {
+    const raw = value.timeOfDay;
+    const entries = Object.entries(raw);
+    if (entries.every(([, preference]) => typeof preference === "string")) {
+      for (const [band, preference] of entries) {
+        if (!TIME_BANDS.includes(band as TimeBand)) continue;
+        const wish = decodeEnum(preference, TIME_PREFERENCES);
+        if (!wish) continue;
+        if (wish === "okay") delete p.timeOfDay[band as TimeBand];
+        else p.timeOfDay[band as TimeBand] = wish;
+      }
+    }
+  }
+  const earliest = decodeTimeLimit(value.earliestStart);
+  if (earliest) p.earliestStart = earliest;
+  const latest = decodeTimeLimit(value.latestEnd);
+  if (latest) p.latestEnd = latest;
+  p.daysOff = decodeDaySet(value.daysOff) ?? 0;
+  p.daysOffStrength = decodeEnum(value.daysOffStrength, STRENGTHS) ?? "preferred";
+  p.dayLayout = decodeEnum(value.dayLayout, DAY_LAYOUTS) ?? "noPreference";
+  const maxClasses = decodeInt(value.maxClassesPerDay);
+  if (maxClasses != null) p.maxClassesPerDay = maxClasses;
+  const maxMinutes = decodeInt(value.maxMinutesPerDay);
+  if (maxMinutes != null) p.maxMinutesPerDay = maxMinutes;
+  p.gaps = decodeEnum(value.gaps, GAP_PREFERENCES) ?? "noPreference";
+  p.breaks = decodeEnum(value.breaks, BREAK_PREFERENCES) ?? "fine";
+  const breakMinutes = decodeInt(value.minimumBreakMinutes);
+  if (breakMinutes != null) p.minimumBreakMinutes = breakMinutes;
+  p.minimumBreakStrength = decodeEnum(value.minimumBreakStrength, STRENGTHS) ?? "preferred";
+  const lunch = decodeLunch(value.lunch);
+  if (lunch) p.lunch = lunch;
+  if (Array.isArray(value.blockedTimes)) {
+    p.blockedTimes = value.blockedTimes.flatMap((item) => {
+      const block = decodeBlockedTime(item);
+      return block ? [block] : [];
+    });
+  }
+  p.format = decodeEnum(value.format, FORMAT_PREFERENCES) ?? "noPreference";
+  p.formatStrength = decodeEnum(value.formatStrength, STRENGTHS) ?? "preferred";
+  if (typeof value.campus === "string") p.campus = value.campus;
+  p.campusStrength = decodeEnum(value.campusStrength, STRENGTHS) ?? "preferred";
+  p.seats = decodeEnum(value.seats, SEAT_POLICIES) ?? "any";
+  p.preferredInstructors = decodeStringList(value.preferredInstructors) ?? [];
+  p.avoidedInstructors = decodeStringList(value.avoidedInstructors) ?? [];
+  const credits = decodeCreditTarget(value.creditTarget);
+  if (credits) p.creditTarget = credits;
+  return p;
+}
+
+/** Swift `SchedulePreferences.encode(to:)`. Nil optionals are omitted. */
+export function encodeSchedulePreferences(p: SchedulePreferences): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const bands = Object.entries(p.timeOfDay).filter((entry): entry is [string, TimePreference] => entry[1] != null);
+  if (bands.length) out.timeOfDay = Object.fromEntries(bands);
+  if (p.earliestStart) out.earliestStart = { minutes: p.earliestStart.minutes, strength: p.earliestStart.strength };
+  if (p.latestEnd) out.latestEnd = { minutes: p.latestEnd.minutes, strength: p.latestEnd.strength };
+  out.daysOff = p.daysOff;
+  out.daysOffStrength = p.daysOffStrength;
+  out.dayLayout = p.dayLayout;
+  if (p.maxClassesPerDay != null) out.maxClassesPerDay = p.maxClassesPerDay;
+  if (p.maxMinutesPerDay != null) out.maxMinutesPerDay = p.maxMinutesPerDay;
+  out.gaps = p.gaps;
+  out.breaks = p.breaks;
+  out.minimumBreakMinutes = p.minimumBreakMinutes;
+  out.minimumBreakStrength = p.minimumBreakStrength;
+  if (p.lunch) out.lunch = { start: p.lunch.start, end: p.lunch.end, minutes: p.lunch.minutes };
+  out.blockedTimes = p.blockedTimes.map((block) => ({
+    id: block.id,
+    label: block.label,
+    days: block.days,
+    start: block.start,
+    end: block.end,
+    strength: block.strength,
+    isEnabled: block.isEnabled,
+  }));
+  out.format = p.format;
+  out.formatStrength = p.formatStrength;
+  if (p.campus != null) out.campus = p.campus;
+  out.campusStrength = p.campusStrength;
+  out.seats = p.seats;
+  out.preferredInstructors = [...p.preferredInstructors];
+  out.avoidedInstructors = [...p.avoidedInstructors];
+  if (p.creditTarget) out.creditTarget = { lower: p.creditTarget.lower, upper: p.creditTarget.upper };
+  return out;
+}
+
+export interface DecodedStoredPlan {
+  name: string;
+  termCode: string;
+  preferences: SchedulePreferences | null;
+  courses: unknown[];
+}
+
+/**
+ * The preferences half of `SchedulePlan`'s Codable. A missing or JSON-null `preferences`
+ * stays unset. Any other value decodes as preferences (damaged values become the defaults)
+ * so one odd field cannot drop the schedule.
+ */
+export function decodeStoredSchedulePlan(value: unknown): DecodedStoredPlan | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.name !== "string" || typeof value.termCode !== "string") return null;
+  let preferences: SchedulePreferences | null = null;
+  if ("preferences" in value && value.preferences != null) preferences = decodeSchedulePreferences(value.preferences);
+  return {
+    name: value.name,
+    termCode: value.termCode,
+    preferences,
+    courses: Array.isArray(value.courses) ? value.courses : [],
+  };
+}
+
+/** Omit `preferences` when it is unset, matching `encodeIfPresent`. */
+export function encodeStoredSchedulePlan(plan: {
+  name: string;
+  termCode: string;
+  courses: unknown[];
+  preferences?: SchedulePreferences | null;
+  id?: string;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = { name: plan.name, termCode: plan.termCode, courses: plan.courses };
+  if (plan.id) out.id = plan.id;
+  if (plan.preferences != null) out.preferences = encodeSchedulePreferences(plan.preferences);
+  return out;
+}
+
+/** Swift `UserData` plan list: one unreadable plan is skipped, the rest stay. */
+export function decodeStoredUserPlans(value: unknown): DecodedStoredPlan[] {
+  if (!isRecord(value) || !Array.isArray(value.plans)) return [];
+  return value.plans.flatMap((item) => {
+    const decoded = decodeStoredSchedulePlan(item);
+    return decoded ? [decoded] : [];
+  });
+}
+
+export interface ScheduleInstructorOption {
+  name: string;
+  displayName: string;
+  courses: { subject: string; number: string }[];
+}
+
+export interface PreferencesSurveyContext {
+  campusNames: string[];
+  instructors: ScheduleInstructorOption[];
+  optionalCourseCount: number;
+  requiredCredits: number;
+  totalCredits: number;
+}
+
+/**
+ * Swift `SchedulePreferencesContext`: campuses, instructors, and credits of the plan's courses.
+ * A missing catalog yields an empty context.
+ */
+export function schedulePreferencesContext(
+  plan: { courses: { key: { subject: string; number: string }; isRequired: boolean; excludedCRNs: readonly string[] }[] },
+  index: {
+    campusNames: readonly string[];
+    course(key: { subject: string; number: string }): { minCredits: number; maxCredits: number } | null | undefined;
+    sectionsOf(key: { subject: string; number: string }): { crn: string; instructors?: { name: string }[] | null }[];
+  } | null,
+): PreferencesSurveyContext {
+  const empty: PreferencesSurveyContext = { campusNames: [], instructors: [], optionalCourseCount: 0, requiredCredits: 0, totalCredits: 0 };
+  if (!index) return empty;
+  const campusNames = index.campusNames.filter((name) => {
+    const lower = name.toLowerCase();
+    return !lower.includes("online") && !lower.includes("no campus");
+  });
+  const byName = new Map<string, ScheduleInstructorOption>();
+  let optionalCourseCount = 0;
+  let requiredCredits = 0;
+  let totalCredits = 0;
+  for (const planCourse of plan.courses) {
+    const course = index.course(planCourse.key);
+    const least = Math.ceil(course?.minCredits ?? 0);
+    const most = Math.ceil(course?.maxCredits ?? 0);
+    if (planCourse.isRequired) requiredCredits += least;
+    else optionalCourseCount += 1;
+    totalCredits += Math.max(least, most);
+    const excluded = new Set(planCourse.excludedCRNs);
+    for (const section of index.sectionsOf(planCourse.key)) {
+      if (excluded.has(section.crn)) continue;
+      for (const instructor of section.instructors ?? []) {
+        const option = byName.get(instructor.name) ?? {
+          name: instructor.name,
+          displayName: instructorDisplayName(instructor.name),
+          courses: [],
+        };
+        if (!option.courses.some((key) => key.subject === planCourse.key.subject && key.number === planCourse.key.number)) {
+          option.courses.push(planCourse.key);
+        }
+        byName.set(instructor.name, option);
+      }
+    }
+  }
+  const instructors = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return { campusNames, instructors, optionalCourseCount, requiredCredits, totalCredits };
+}
+
+/** One part of the survey, matching Swift `PreferenceField`. */
+export type SurveyField =
+  | { kind: "timeOfDay"; band: TimeBand }
+  | { kind: "earliestStart" }
+  | { kind: "latestEnd" }
+  | { kind: "daysOff" }
+  | { kind: "dayLayout" }
+  | { kind: "workload" }
+  | { kind: "gaps" }
+  | { kind: "breaks" }
+  | { kind: "lunch" }
+  | { kind: "blockedTime"; id: string }
+  | { kind: "format" }
+  | { kind: "campus" }
+  | { kind: "seats" }
+  | { kind: "instructors" }
+  | { kind: "credits" };
+
+function sameLimit(a?: TimeLimit | null, b?: TimeLimit | null): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return a.minutes === b.minutes && a.strength === b.strength;
+}
+
+function sameBlock(a: BlockedTime, b: BlockedTime): boolean {
+  return a.id === b.id && a.label === b.label && a.days === b.days && a.start === b.start && a.end === b.end && a.strength === b.strength && a.isEnabled === b.isEnabled;
+}
+
+/** Swift `changedFields(from:)`. Removed blocks are not listed; a new or edited block is. */
+export function changedSurveyFields(next: SchedulePreferences, old: SchedulePreferences): SurveyField[] {
+  const changed: SurveyField[] = [];
+  for (const band of TIME_BANDS) {
+    if (bandPreference(next, band) !== bandPreference(old, band)) changed.push({ kind: "timeOfDay", band });
+  }
+  if (!sameLimit(next.earliestStart, old.earliestStart)) changed.push({ kind: "earliestStart" });
+  if (!sameLimit(next.latestEnd, old.latestEnd)) changed.push({ kind: "latestEnd" });
+  if (next.daysOff !== old.daysOff || (next.daysOff !== 0 && next.daysOffStrength !== old.daysOffStrength)) changed.push({ kind: "daysOff" });
+  if (next.dayLayout !== old.dayLayout) changed.push({ kind: "dayLayout" });
+  if ((next.maxClassesPerDay ?? null) !== (old.maxClassesPerDay ?? null) || (next.maxMinutesPerDay ?? null) !== (old.maxMinutesPerDay ?? null)) {
+    changed.push({ kind: "workload" });
+  }
+  if (next.gaps !== old.gaps) changed.push({ kind: "gaps" });
+  if (
+    next.breaks !== old.breaks ||
+    (next.breaks === "atLeast" && (next.minimumBreakMinutes !== old.minimumBreakMinutes || next.minimumBreakStrength !== old.minimumBreakStrength))
+  ) {
+    changed.push({ kind: "breaks" });
+  }
+  if (JSON.stringify(next.lunch ?? null) !== JSON.stringify(old.lunch ?? null)) changed.push({ kind: "lunch" });
+  const oldBlocks = new Map<string, BlockedTime>();
+  for (const block of old.blockedTimes) if (!oldBlocks.has(block.id)) oldBlocks.set(block.id, block);
+  for (const block of next.blockedTimes) {
+    const prev = oldBlocks.get(block.id);
+    if (!prev || !sameBlock(prev, block)) changed.push({ kind: "blockedTime", id: block.id });
+  }
+  if (next.format !== old.format || (next.format !== "noPreference" && next.formatStrength !== old.formatStrength)) changed.push({ kind: "format" });
+  if ((next.campus ?? null) !== (old.campus ?? null) || (next.campus != null && next.campusStrength !== old.campusStrength)) changed.push({ kind: "campus" });
+  if (next.seats !== old.seats) changed.push({ kind: "seats" });
+  if (
+    JSON.stringify(next.preferredInstructors) !== JSON.stringify(old.preferredInstructors) ||
+    JSON.stringify(next.avoidedInstructors) !== JSON.stringify(old.avoidedInstructors)
+  ) {
+    changed.push({ kind: "instructors" });
+  }
+  if (JSON.stringify(next.creditTarget ?? null) !== JSON.stringify(old.creditTarget ?? null)) changed.push({ kind: "credits" });
+  return changed;
+}
 
 export function changedPreferenceFields(next: SchedulePreferences, prev: SchedulePreferences): PreferenceField[] {
   const fields: PreferenceField[] = [];

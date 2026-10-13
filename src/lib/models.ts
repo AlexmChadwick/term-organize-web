@@ -644,6 +644,67 @@ export function termCalendarYear(code: string): number {
   return termSeason(code) === "fall" ? year - 1 : year;
 }
 
+/** UTC milliseconds for a wall-clock time in America/New_York. */
+export function newYorkEpochMs(year: number, month: number, day: number, hour = 0, minute = 0, second = 0): number {
+  const guess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(guess));
+  const pick = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  let y = pick("year");
+  let m = pick("month");
+  let d = pick("day");
+  let h = pick("hour");
+  const min = pick("minute");
+  const sec = pick("second");
+  if (h === 24) {
+    h = 0;
+    const next = new Date(Date.UTC(y, m - 1, d) + 86_400_000);
+    y = next.getUTCFullYear();
+    m = next.getUTCMonth() + 1;
+    d = next.getUTCDate();
+  }
+  const asUtc = Date.UTC(y, m - 1, d, h, min, sec);
+  return guess - (asUtc - guess);
+}
+
+/**
+ * Approximate first and last moments of classes, inclusive, in campus time.
+ * Port of `TermCalendar.approximateWindow`.
+ */
+export function termApproximateWindow(termCode: string): { start: number; end: number } | null {
+  if (!/^\d{6}$/.test(termCode)) return null;
+  const year = termCalendarYear(termCode);
+  const bounds: Record<Season, [[number, number], [number, number]]> = {
+    fall: [[9, 1], [12, 23]],
+    winter: [[1, 1], [3, 31]],
+    spring: [[1, 3], [4, 30]],
+    summer1: [[5, 1], [6, 30]],
+    summerFull: [[5, 1], [8, 20]],
+    summer2: [[6, 25], [8, 20]],
+  };
+  const [start, end] = bounds[termSeason(termCode)];
+  const first = newYorkEpochMs(year, start[0], start[1]);
+  const lastDay = newYorkEpochMs(year, end[0], end[1]);
+  return { start: first, end: lastDay + 86_400_000 - 1000 };
+}
+
+/** Higher sectionsUpdatedAt wins; equal times keep the catalog with more loaded details. */
+export function catalogIsNewer(candidate: TermCatalog, baseline: TermCatalog): boolean {
+  const candidateDetails = candidate.courses.filter((course) => course.detailsLoaded).length;
+  const baselineDetails = baseline.courses.filter((course) => course.detailsLoaded).length;
+  const candidateAt = candidate.sectionsUpdatedAt ?? 0;
+  const baselineAt = baseline.sectionsUpdatedAt ?? 0;
+  return candidateAt > baselineAt || (candidateAt === baselineAt && candidateDetails > baselineDetails);
+}
+
 export function termIsViewOnly(term: Term): boolean {
   return term.bannerDescription.toLowerCase().includes("view only");
 }
@@ -720,12 +781,41 @@ export function courseColorAt(index: number) {
   return COURSE_PALETTE[((index % n) + n) % n]!;
 }
 
-export function courseColorForCode(code: string) {
-  let hash = 5381;
-  for (let i = 0; i < code.length; i++) {
-    hash = Math.imul(hash, 33) + code.charCodeAt(i);
+const HASH64 = (1n << 64n) - 1n;
+
+/**
+ * Stable palette index for a course code. Matches `CourseColor.forCode` in the iOS app:
+ * a wrapping 64-bit djb2 over UTF-8 bytes, then modulo the palette length.
+ */
+export function courseColorIndex(code: string): number {
+  let hash = 5381n;
+  for (const byte of new TextEncoder().encode(code)) {
+    hash = (hash * 33n + BigInt(byte)) & HASH64;
   }
-  return courseColorAt(Math.abs(hash) % COURSE_PALETTE.length);
+  return Number(hash % BigInt(COURSE_PALETTE.length));
+}
+
+export function courseColorForCode(code: string) {
+  return courseColorAt(courseColorIndex(code));
+}
+
+/**
+ * One palette slot per course. Each course keeps its `courseColorIndex` unless another
+ * course in the list already took it, matching `ProfessorPage.courseColors`.
+ */
+export function distinctCourseColorIndexes(keys: readonly CourseKey[]): Map<string, number> {
+  const used = new Set<number>();
+  const colors = new Map<string, number>();
+  const count = COURSE_PALETTE.length;
+  for (const key of keys) {
+    let slot = courseColorIndex(keyId(key));
+    if (used.size < count) {
+      while (used.has(slot)) slot = (slot + 1) % count;
+    }
+    used.add(slot);
+    colors.set(keyId(key), slot);
+  }
+  return colors;
 }
 
 // MARK: - Search filters
