@@ -56,4 +56,4 @@ Swift test files and what this repo runs:
 | `DegreeRequirementsTests`, `DegreeAuditMatchingTests`, `DegreeNUpathTests`, substitution presentation, offering history | A representative slice in `src/lib/degree/port-check.test.ts` (program-page parse, audit matching, NUpath 13 of 13, equivalences, renumbering, reorder). The rest of those fixture files are not re-transcribed assertion by assertion. |
 | `PrerequisiteDataTests` | Not re-transcribed (about two thousand lines of fixture HTML). The parser those tests lock is `parsePrerequisites`. Reorder cases from that file are covered in `port-check.test.ts`. |
 | `CloudSyncTests` | Omitted with iCloud. `mergeUserData` still tolerates a broken JSON import. |
-| Playwright | `e2e/main.spec.ts` covers home, search, a course, a section, the schedule, rooms, settings, and the legal notice. |
+| Playwright | `e2e/main.spec.ts` covers home, search, a course, a section, adding that section to a schedule, generating a week from natural-language preferences, rooms, settings, the legal notice, a new degree plan, professors, and the watchlist. |

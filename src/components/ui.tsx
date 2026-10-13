@@ -12,16 +12,16 @@ export function Button({
   return <button className={cn("btn", variant === "ghost" && "ghost", variant === "soft" && "soft", className)} {...props} />;
 }
 
-export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn("field", props.className)} {...props} />;
+export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={cn("field", className)} {...props} />;
 }
 
-export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn("area", props.className)} {...props} />;
+export function TextArea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={cn("area", className)} {...props} />;
 }
 
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn("select", props.className)} {...props} />;
+export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={cn("select", className)} {...props} />;
 }
 
 export function Modal({

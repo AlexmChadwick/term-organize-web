@@ -41,6 +41,30 @@ test("rooms, settings, and the license", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Export JSON" })).toBeVisible();
   await page.goto("/legal");
-  await expect(page.getByText(NOTICE)).toBeVisible();
+  await expect(page.getByText(NOTICE).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "GNU Affero General Public License v3.0" })).toBeVisible();
+});
+
+test("schedule generator and natural-language preferences", async ({ page }) => {
+  await page.goto("/schedule");
+  await expect(page.getByRole("heading", { name: "Schedule" })).toBeVisible();
+  await page.getByLabel("Add a course").fill("CS 3000");
+  await page.getByRole("button", { name: /CS 3000 · Algorithms and Data/ }).click();
+  await expect(page.getByRole("link", { name: "CS 3000" })).toBeVisible();
+  await page.getByLabel("Describe the week").fill("no classes before 10am, Fridays off, prefer afternoons");
+  await page.getByRole("button", { name: "Read that into preferences" }).click();
+  await expect(page.getByText(/No classes before/)).toBeVisible();
+  await page.getByRole("button", { name: "Generate schedules" }).click();
+  await expect(page.getByText(/\d+ schedules? fit\.|don't share a conflict-free week|No section/)).toBeVisible();
+});
+
+test("degree plan, professors, and the watchlist", async ({ page }) => {
+  await page.goto("/degree");
+  await expect(page.getByRole("heading", { name: "Degree plan" })).toBeVisible();
+  await page.getByRole("button", { name: "New plan" }).click();
+  await expect(page.getByLabel("Plan name")).toBeVisible();
+  await page.goto("/professors");
+  await expect(page.getByRole("heading", { name: "Professors" })).toBeVisible();
+  await page.goto("/watchlist");
+  await expect(page.getByRole("heading", { name: "Seat alerts" })).toBeVisible();
 });
