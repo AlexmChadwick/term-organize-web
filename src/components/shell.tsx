@@ -36,11 +36,11 @@ export function Shell({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="topbar-tools">
           <label className="sr-only" htmlFor="term-select">
             Term
           </label>
-          <select id="term-select" className="select w-auto py-2 text-sm" value={termCode} onChange={(event) => setTermCode(event.target.value)}>
+          <select id="term-select" className="select term-select py-2 text-sm" value={termCode} onChange={(event) => setTermCode(event.target.value)}>
             {terms.map((term) => (
               <option key={term.code} value={term.code}>
                 {term.name}

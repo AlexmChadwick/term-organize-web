@@ -41,8 +41,8 @@ export function Modal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       {trigger ? <Dialog.Trigger asChild>{trigger}</Dialog.Trigger> : null}
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[min(560px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[22px] border border-line bg-surface p-5 shadow-2xl">
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] max-h-[min(85vh,640px)] w-[min(520px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[22px] border border-line bg-surface p-5 shadow-2xl">
           <div className="mb-3 flex items-start justify-between gap-3">
             <Dialog.Title className="text-lg font-semibold tracking-tight">{title}</Dialog.Title>
             <Dialog.Close className="btn ghost tiny" type="button">

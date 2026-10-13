@@ -2,29 +2,47 @@ import { APP_COPYRIGHT, DATA_NOTICE, LICENSE_GRANT, NO_WARRANTY, PRIVACY_NOTICE,
 import type { Metadata } from "next";
 import Link from "next/link";
 
+function UrlText({ href }: { href: string }) {
+  const parts = href.split("/");
+  return (
+    <a className="url underline" href={href}>
+      {parts.map((part, index) => (
+        <span key={`${part}-${index}`}>
+          {index > 0 ? "/" : null}
+          {part}
+          {index < parts.length - 1 ? <wbr /> : null}
+        </span>
+      ))}
+    </a>
+  );
+}
+
 export const metadata: Metadata = { title: "About and license" };
 
 export default function LegalPage() {
   return (
-    <article className="grid max-w-3xl gap-4 text-[15px] leading-relaxed">
+    <article className="card grid max-w-3xl gap-4 p-6 text-[15px] leading-relaxed md:p-8">
       <h1 className="text-3xl font-semibold tracking-tight">About Term Organize</h1>
       <p className="font-semibold">{UNOFFICIAL_NOTICE}</p>
       <p>{APP_COPYRIGHT}</p>
       <p>{LICENSE_GRANT}</p>
       <p>{NO_WARRANTY}</p>
-      <p>{SOURCE_OFFER}</p>
       <p>
-        <a className="underline" href={SOURCE_URL}>
-          {SOURCE_URL}
-        </a>
+        {SOURCE_OFFER.split(SOURCE_URL).map((part, index, parts) => (
+          <span key={index}>
+            {part}
+            {index < parts.length - 1 ? <UrlText href={SOURCE_URL} /> : null}
+          </span>
+        ))}
+      </p>
+      <p>
+        <UrlText href={SOURCE_URL} />
       </p>
       <h2 className="text-xl font-semibold">SearchNEU</h2>
       <p>{SEARCHNEU_SUMMARY}</p>
       <p>{UPSTREAM_COPYRIGHT}</p>
       <p>
-        <a className="underline" href={SEARCHNEU_URL}>
-          {SEARCHNEU_URL}
-        </a>
+        <UrlText href={SEARCHNEU_URL} />
       </p>
       <h2 className="text-xl font-semibold">Privacy</h2>
       <p>{PRIVACY_NOTICE}</p>

@@ -51,7 +51,7 @@ function SearchScreen() {
       <div className="flex flex-col gap-2 md:flex-row md:items-end">
         <label className="label grow">
           Search
-          <TextInput value={text} onChange={(event) => setText(event.target.value)} placeholder="fundies, orgo, CS 3000, 12345" autoFocus />
+          <TextInput value={text} onChange={(event) => setText(event.target.value)} placeholder="fundies, orgo, CS 3000, 12345" />
         </label>
         <label className="label">
           Sort
@@ -190,24 +190,20 @@ function SearchScreen() {
               <input className="field" inputMode="decimal" value={filters.maxCredits ?? ""} onChange={(event) => setFilters({ ...filters, maxCredits: event.target.value ? Number(event.target.value) : null })} />
             </label>
           </div>
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={() => setFilters(emptySearchFilters())}
-          >
+          <Button className="justify-self-start md:col-span-2" variant="ghost" type="button" onClick={() => setFilters(emptySearchFilters())}>
             Clear filters
           </Button>
         </div>
       ) : null}
 
-      {catalogStatus === "loading" && !index ? <p className="text-muted">Loading the catalog…</p> : null}
-      {catalogStatus === "building" ? <p className="text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
-      {catalogStatus === "ready" && catalogDetail ? <p className="text-muted">{catalogDetail}</p> : null}
-      {catalogStatus === "error" ? <p className="text-bad">{catalogError ?? "The catalog did not load."}</p> : null}
+      {catalogStatus === "loading" && !index ? <p className="state text-muted">Loading the catalog…</p> : null}
+      {catalogStatus === "building" ? <p className="state text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
+      {catalogStatus === "ready" && catalogDetail ? <p className="text-sm text-muted">{catalogDetail}</p> : null}
+      {catalogStatus === "error" ? <p className="state text-bad">{catalogError ?? "The catalog did not load. Refresh the page."}</p> : null}
 
       {!text.trim() && searchFilterCount(filters) === 0 ? (
         <div className="grid gap-3">
-          <p className="text-muted">Try a shorthand like fundies, orgo, or linalg. Typos within a small edit distance still match.</p>
+          <p className="state text-muted">Search by course, title, or a shorthand like fundies, orgo, or linalg. A CRN works too, and filters work on their own.</p>
           {user.searchHistory.length ? (
             <div className="flex flex-wrap gap-2">
               {user.searchHistory.map((item) => (
@@ -269,7 +265,7 @@ function SearchScreen() {
           );
         })}
       </ul>
-      {response && response.results.length === 0 ? <p className="text-muted">Nothing matched. Check the subject code or loosen a filter.</p> : null}
+      {response && response.results.length === 0 ? <p className="state text-muted">Nothing matched. Check the subject code or loosen a filter.</p> : null}
     </div>
   );
 }
@@ -289,7 +285,7 @@ function timeToMinutes(value: string): number | null {
 
 export default function SearchPage() {
   return (
-    <Suspense fallback={<p className="text-muted">Loading search…</p>}>
+    <Suspense fallback={<p className="state text-muted">Loading search…</p>}>
       <SearchScreen />
     </Suspense>
   );

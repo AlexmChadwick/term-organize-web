@@ -25,7 +25,7 @@ export default function RoomsPage() {
     return filterBuildings(rows, query).filter((row) => (onlyFree ? row.free.length > 0 : true));
   }, [index, moment, query, onlyFree]);
 
-  if (!index) return <p className="text-muted">Loading rooms from the catalog…</p>;
+  if (!index) return <p className="state text-muted">Loading rooms from the catalog…</p>;
 
   return (
     <div className="grid gap-4">
@@ -64,8 +64,11 @@ export default function RoomsPage() {
             <ul className="mt-2 grid gap-1 text-sm md:grid-cols-2">
               {row.free.slice(0, 12).map((entry) => (
                 <li key={entry.room.id}>
-                  <span className="font-semibold">{entry.room.room}</span> <span className="text-good">{roomStatusSummary(entry.status)}</span>
-                  <span className="text-muted"> · {roomStatusDetail(entry.status)}</span>
+                  <span className="font-semibold">{entry.room.room}</span>{" "}
+                  <span className="text-good">{roomStatusSummary(entry.status)}</span>
+                  {roomStatusDetail(entry.status) !== roomStatusSummary(entry.status) ? (
+                    <span className="text-muted"> · {roomStatusDetail(entry.status)}</span>
+                  ) : null}
                 </li>
               ))}
               {row.busy.slice(0, onlyFree ? 0 : 8).map((entry) => (
@@ -87,7 +90,7 @@ export default function RoomsPage() {
           </li>
         ))}
       </ul>
-      {!buildings.length ? <p className="text-muted">No rooms match. Try another time or clear the building filter.</p> : null}
+      {!buildings.length ? <p className="state text-muted">No rooms match. Try another time or clear the building filter.</p> : null}
     </div>
   );
 }

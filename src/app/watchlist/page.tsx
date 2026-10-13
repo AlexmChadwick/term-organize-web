@@ -94,7 +94,7 @@ export default function WatchlistPage() {
           Closed-browser alerts need VAPID keys on the server. Generate a pair with <code>npx web-push generate-vapid-keys</code> and set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT. See the README.
         </p>
       ) : null}
-      {!items.length && !others.length ? <p className="text-muted">Open a section and choose Watch seats. Full sections are the useful ones.</p> : null}
+      {!items.length && !others.length ? <p className="state text-muted">Open a section and choose Watch seats. Full sections are the useful ones.</p> : null}
       <ul className="grid gap-2">
         {items.map((item) => (
           <li key={item.crn} className="card flex flex-wrap items-center justify-between gap-3 p-4">

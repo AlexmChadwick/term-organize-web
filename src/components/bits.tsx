@@ -9,6 +9,7 @@ import {
   dayIndices,
   hourAxisLabel,
   instructorLabel,
+  timeLabel,
   isReqAnd,
   isReqCourse,
   isReqOr,
@@ -17,7 +18,6 @@ import {
   meetingLocation,
   meetingTimeLabel,
   nupathsFromAttributes,
-  rangeLabel,
   scheduleSummary,
   seatTone,
   weeklyMeetings,
@@ -113,9 +113,9 @@ export function WeekCalendar({
     <div className="week" style={{ ["--days" as string]: days.length }}>
       <div>
         <div className="h-6" />
-        <div className="relative" style={{ height: hours.length * 48 }}>
+        <div className="relative hour-rail" style={{ height: hours.length * 40 }}>
           {hours.map((hour, index) => (
-            <div key={hour} className="hour-label absolute right-0" style={{ top: index * 48 - 6 }}>
+            <div key={hour} className="hour-label absolute right-0" style={{ top: index * 40 - 6 }}>
               {hourAxisLabel(hour)}
             </div>
           ))}
@@ -124,7 +124,7 @@ export function WeekCalendar({
       {days.map((day) => (
         <div key={day}>
           <div className="mb-1 text-center text-xs font-semibold text-muted">{DAY_SHORT[day]}</div>
-          <div className="week-col" style={{ height: hours.length * 48 }}>
+          <div className="week-col" style={{ height: hours.length * 40 }}>
             {placed
               .filter((block) => block.day === day)
               .map((block) => {
@@ -144,14 +144,15 @@ export function WeekCalendar({
                       width: `calc(${width}% - 4px)`,
                       background: color.fill,
                       borderColor: color.stroke,
-                      color: color.text,
+                      ["--block-ink" as string]: color.text,
+                      ["--block-stroke" as string]: color.stroke,
+                      ["--block-ink-light" as string]: readableInk(color.text, color.stroke, "#f7f1ea"),
+                      ["--block-ink-dark" as string]: readableInk(color.text, color.stroke, "#261f23"),
                     }}
                   >
                     <div className="font-semibold">{block.title}</div>
-                    <div>
-                      {rangeLabel(block.start, block.end)}
-                    </div>
-                    <div className="opacity-80">{block.detail}</div>
+                    <div>{weekRange(block.start, block.end)}</div>
+                    <div>{block.detail}</div>
                   </div>
                 );
                 return block.href ? (
@@ -250,6 +251,66 @@ export function dayChips(days: DaySet, onToggle: (day: number) => void, labels =
       })}
     </div>
   );
+}
+
+function weekRange(start: number, end: number): string {
+  const samePeriod = start / 60 < 12 === end / 60 < 12;
+  const startLabel = timeLabel(start, !samePeriod).replace(" ", "");
+  const endLabel = timeLabel(end).replace(" ", "");
+  return `${startLabel}–${endLabel}`;
+}
+
+type RGB = [number, number, number];
+
+function hexToRgb(hex: string): RGB | null {
+  const match = /^#([\da-f]{6})$/i.exec(hex.trim());
+  if (!match) return null;
+  const value = match[1]!;
+  return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
+}
+
+function rgbToHex([r, g, b]: RGB): string {
+  const channel = (n: number) => Math.round(Math.min(255, Math.max(0, n))).toString(16).padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
+}
+
+function mixRgb(a: RGB, b: RGB, amount: number): RGB {
+  return [a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount, a[2] + (b[2] - a[2]) * amount];
+}
+
+function channelLum(channel: number): number {
+  const s = channel / 255;
+  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+}
+
+function luminance(rgb: RGB): number {
+  return 0.2126 * channelLum(rgb[0]) + 0.7152 * channelLum(rgb[1]) + 0.0722 * channelLum(rgb[2]);
+}
+
+function contrastRatio(a: RGB, b: RGB): number {
+  const left = luminance(a);
+  const right = luminance(b);
+  const [hi, lo] = left > right ? [left, right] : [right, left];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** Darken or lighten palette ink until it clears the translucent block fill. CSS variables pass through. */
+export function readableInk(text: string, stroke: string, surface: string): string {
+  if (text.startsWith("var(") || stroke.startsWith("var(")) return text;
+  const ink = hexToRgb(text);
+  const line = hexToRgb(stroke);
+  const ground = hexToRgb(surface);
+  if (!ink || !line || !ground) return text;
+  const background = mixRgb(ground, line, 0.18);
+  if (contrastRatio(ink, background) >= 4.5) return text;
+  const toward: RGB = luminance(background) > 0.4 ? [28, 20, 22] : [255, 252, 248];
+  let best = ink;
+  for (let step = 1; step <= 10; step++) {
+    const next = mixRgb(ink, toward, step / 10);
+    best = next;
+    if (contrastRatio(next, background) >= 4.5) return rgbToHex(next);
+  }
+  return rgbToHex(best);
 }
 
 export function meetingLabel(section: CourseSection): string {

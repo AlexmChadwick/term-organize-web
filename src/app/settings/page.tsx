@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Select, TextInput } from "@/components/ui";
+import { Button, Modal, Select, TextInput } from "@/components/ui";
 import { useApp, type ThemeChoice } from "@/lib/app-state";
 import { UNOFFICIAL_NOTICE } from "@/lib/legal";
 import { emptyUserData, mergeUserData } from "@/lib/user";
@@ -10,6 +10,7 @@ import { useState } from "react";
 export default function SettingsPage() {
   const { user, updateUser, replaceUser, theme, setTheme, termCode, catalogStatus, rebuildTerm } = useApp();
   const [notice, setNotice] = useState<string | null>(null);
+  const [eraseOpen, setEraseOpen] = useState(false);
   const prefs = user.preferences;
 
   function download() {
@@ -97,17 +98,27 @@ export default function SettingsPage() {
               }}
             />
           </label>
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={() => {
-              if (!confirm("Erase schedules, plans, and alerts stored in this browser?")) return;
-              replaceUser(emptyUserData());
-              setNotice("Cleared local data.");
-            }}
-          >
+          <Button variant="ghost" type="button" onClick={() => setEraseOpen(true)}>
             Erase local data
           </Button>
+          <Modal open={eraseOpen} onOpenChange={setEraseOpen} title="Erase local data?">
+            <p className="text-sm text-muted">This removes schedules, degree plans, saved courses, and seat alerts stored in this browser. An export file on your computer is left as it is.</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button variant="ghost" type="button" onClick={() => setEraseOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  replaceUser(emptyUserData());
+                  setNotice("Cleared local data.");
+                  setEraseOpen(false);
+                }}
+              >
+                Erase
+              </Button>
+            </div>
+          </Modal>
         </div>
         {notice ? <p className="text-sm">{notice}</p> : null}
       </section>

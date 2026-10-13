@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 export default function HomePage() {
-  const { index, catalogStatus, catalogDetail, catalogError, user, updateUser, plan, termCode } = useApp();
+  const { index, catalogStatus, catalogDetail, catalogError, user, updateUser, plan, termCode, ready } = useApp();
   const [query, setQuery] = useState("");
   const subjects = index ? popularSubjects(index, 8) : [];
   const sections = useMemo(() => {
@@ -23,10 +23,10 @@ export default function HomePage() {
   const upcoming = upcomingClasses(sections, new Date(), 3);
 
   return (
-    <div className="grid gap-6">
-      <section className="card p-6 md:p-8">
+    <div className="grid gap-4 md:gap-6">
+      <section className="card p-5 sm:p-6 md:p-8">
         <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">Northeastern course search</p>
-        <h1 className="mt-2 max-w-2xl text-4xl font-semibold tracking-tight md:text-5xl">Build the term before Banner does it for you.</h1>
+        <h1 className="mt-2 max-w-2xl text-[1.75rem] font-semibold leading-[1.12] tracking-tight sm:text-4xl md:text-5xl">Build the term before Banner does it for you.</h1>
         <p className="mt-3 max-w-2xl text-muted">
           Search the catalog, compare open seats, generate a conflict-free week, and check it against your degree plan. {UNOFFICIAL_NOTICE}
         </p>
@@ -39,26 +39,29 @@ export default function HomePage() {
             Search
           </button>
         </form>
-        {catalogStatus === "loading" && !index ? <p className="mt-3 text-sm text-muted">Loading the catalog…</p> : null}
-        {catalogStatus === "building" ? <p className="mt-3 text-sm text-muted">{catalogDetail ?? "Downloading every section of this term from Banner…"}</p> : null}
         {catalogStatus === "ready" && catalogDetail ? <p className="mt-3 text-sm text-muted">{catalogDetail}</p> : null}
-        {catalogStatus === "error" ? <p className="mt-3 text-sm text-bad">{catalogError ?? "The catalog did not load. Refresh the page."}</p> : null}
       </section>
 
-      {!user.preferences.hasCompletedOnboarding ? (
-        <section className="card p-5">
+      {ready && !user.preferences.hasCompletedOnboarding ? (
+        <section className="card p-4 sm:p-5">
           <h2 className="text-lg font-semibold">Before you register</h2>
-          <ul className="mt-2 grid gap-1 text-sm text-muted">
+          <ul className="mt-2 grid gap-1 text-sm leading-snug text-muted">
             <li>Unofficial tool. It reads public Banner and catalog pages. It cannot enroll you.</li>
             <li>Schedules, plans, and seat alerts stay in this browser until you export them.</li>
             <li>Fall 2026 is already downloaded. Any other term Banner lists is fetched the first time you open it, including that term’s own course descriptions.</li>
           </ul>
-          <button className="btn mt-4" type="button" onClick={() => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, hasCompletedOnboarding: true } }))}>
+          <button className="btn mt-3" type="button" onClick={() => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, hasCompletedOnboarding: true } }))}>
             Got it
           </button>
         </section>
       ) : null}
 
+      {!index && catalogStatus === "error" ? <p className="state text-bad">{catalogError ?? "The catalog did not load. Refresh the page."}</p> : null}
+      {!index && catalogStatus !== "error" ? (
+        <p className="state text-muted">{catalogStatus === "building" ? (catalogDetail ?? "Downloading every section of this term from Banner…") : "Loading the catalog…"}</p>
+      ) : null}
+
+      {index ? (
       <div className="grid gap-4 md:grid-cols-3">
         <section className="card p-5">
           <h2 className="font-semibold">Up next</h2>
@@ -133,6 +136,7 @@ export default function HomePage() {
           )}
         </section>
       </div>
+      ) : null}
 
       {subjects.length ? (
         <section>

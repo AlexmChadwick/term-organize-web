@@ -181,7 +181,7 @@ export default function DegreePage() {
         </div>
       ) : null}
 
-      {!plan ? <p className="text-muted">No degree plan yet. Import a View Plan PDF or start a blank one. A blank plan can pull courses from your primary schedule.</p> : null}
+      {!plan ? <p className="state text-muted">No degree plan yet. Import a View Plan PDF or start a blank one. A blank plan can pull courses from your primary schedule.</p> : null}
 
       {plan ? (
         <PlanEditor
@@ -294,7 +294,7 @@ export default function DegreePage() {
           <TextInput value={programQuery} onChange={(event) => setProgramQuery(event.target.value)} placeholder="Computer Science, BS" />
         </label>
         {visiblePrograms.length ? (
-          <ul className="max-h-48 overflow-auto text-sm">
+          <ul className="max-h-48 overflow-auto rounded-xl border border-line text-sm">
             {visiblePrograms.map((program) => (
               <li key={program.path}>
                 <button
@@ -331,6 +331,7 @@ export default function DegreePage() {
             ))}
           </ul>
         ) : null}
+        {programQuery.trim() && programs.length > 0 && !visiblePrograms.length ? <p className="text-sm text-muted">No program title matches that.</p> : null}
         {requirements ? (
           <div className="grid gap-3">
             <p className="text-sm text-muted">

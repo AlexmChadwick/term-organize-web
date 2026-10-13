@@ -500,7 +500,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 async function fetchCatalog(term: string): Promise<TermCatalog | null> {
   const res = await fetch(`/api/catalog/${term}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error("The catalog request failed.");
+  if (!res.ok) throw new Error("The catalog did not load. Refresh the page.");
   return (await res.json()) as TermCatalog;
 }
 

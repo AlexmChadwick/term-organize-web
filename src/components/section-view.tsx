@@ -1,10 +1,10 @@
 "use client";
 
-import { SeatText, courseHref, meetingLabel } from "@/components/bits";
+import { SeatText, courseHref } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { nextColorIndex } from "@/lib/user";
-import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel } from "@/lib/models";
+import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLocation, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel, weeklyMeetings } from "@/lib/models";
 import Link from "next/link";
 import { useEffect } from "react";
 
@@ -16,7 +16,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
   const section = index && index.catalog.term.code === term ? index.sectionByCRN(crn) : undefined;
   if (!index || index.catalog.term.code !== term) {
     return (
-      <p className="text-muted">
+      <p className={catalogStatus === "error" ? "state text-bad" : "state text-muted"}>
         {catalogStatus === "building"
           ? (catalogDetail ?? "Downloading every section of this term from Banner…")
           : catalogStatus === "error"
@@ -55,7 +55,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
       </header>
       <section className="card p-5">
         <p className="text-lg">{scheduleSummary(section)}</p>
-        <p className="mt-1 text-sm text-muted">{meetingLabel(section)}</p>
+        <p className="mt-1 text-sm text-muted">{weeklyMeetings(section).map((meeting) => meetingLocation(meeting)).join(" · ") || "Location TBA"}</p>
         <p className="mt-3">
           <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
           <span className="text-muted"> · {seatsLabel(section)}</span>

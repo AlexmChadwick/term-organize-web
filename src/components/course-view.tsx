@@ -64,7 +64,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
 
   const hasLiveSections = (liveSections?.length ?? 0) > 0;
   if (missingFromTerm && !hasLiveSections) {
-    if (status === "idle" || status === "loading") return <p className="text-muted">Asking Banner for {subject} {number}…</p>;
+    if (status === "idle" || status === "loading") return <p className="state text-muted">Asking Banner for {subject} {number}…</p>;
     return (
       <CatalogEntry
         courseKey={key}
@@ -81,7 +81,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
       />
     );
   }
-  if (!course && status === "loading") return <p className="text-muted">Asking Banner for {subject} {number}…</p>;
+  if (!course && status === "loading") return <p className="state text-muted">Asking Banner for {subject} {number}…</p>;
   if (!course && status === "error") {
     return (
       <div className="card p-5">
@@ -91,7 +91,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
       </div>
     );
   }
-  if (!course) return <p className="text-muted">Looking up {subject} {number}…</p>;
+  if (!course) return <p className="state text-muted">Looking up {subject} {number}…</p>;
 
   const title = course.title || `${subject} ${number}`;
   const description = course.description || "No description in this snapshot yet.";
@@ -102,10 +102,10 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
         <div>
           <p className="text-sm font-semibold text-accent">{subject} {number}</p>
           <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-1 text-muted">
-            {course.minCredits != null && course.maxCredits != null ? creditsLabel(course.minCredits, course.maxCredits) : null}
-            {course.college ? ` · ${course.college}` : ""}
-            {course.department ? ` · ${course.department}` : ""}
+          <p className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-muted">
+            {course.minCredits != null && course.maxCredits != null ? <span>{creditsLabel(course.minCredits, course.maxCredits)}</span> : null}
+            {course.college ? <span>{course.college}</span> : null}
+            {course.department ? <span>{course.department}</span> : null}
           </p>
           <div className="mt-2">
             <NuChips attributes={course.attributes ?? []} />
@@ -176,7 +176,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
       <section>
         <h2 className="mb-2 font-semibold">Sections</h2>
         {sections.length === 0 ? <p className="text-muted">No sections for this term.</p> : null}
-        <div className="overflow-x-auto">
+        <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -328,7 +328,7 @@ function CatalogEntry({
   if (state === "failed") {
     return (
       <div className="card p-5">
-        <h1 className="text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
+        <h1 className="text-balance text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
         <p className="mt-2 text-muted">
           {stillFailing
             ? "Banner's course catalog still isn't answering. Try again in a minute."
@@ -349,7 +349,7 @@ function CatalogEntry({
   }
   return (
     <div className="card p-5">
-      <h1 className="text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
+      <h1 className="text-balance text-2xl font-semibold">{code} isn&apos;t offered in {termLabel}</h1>
       <p className="mt-2 text-muted">Banner&apos;s recent course catalogs don&apos;t list it either, so the course code may have changed.</p>
       <Link className="btn mt-3 inline-flex" href={`/search?q=${encodeURIComponent(code)}`}>
         Search for {code}

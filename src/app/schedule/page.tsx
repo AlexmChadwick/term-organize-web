@@ -225,7 +225,7 @@ export default function SchedulePage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
         <div className="grid content-start gap-3">
           <section className="card p-4">
             <label className="label">
@@ -312,7 +312,7 @@ export default function SchedulePage() {
                         <option value="">Not chosen</option>
                         {sections.map((section) => (
                           <option key={section.crn} value={section.crn}>
-                            {section.crn} · {section.classType} {section.sectionNumber} · {scheduleSummary(section)} · {section.seatsRemaining} seats
+                            {sectionChoice(section)}
                           </option>
                         ))}
                       </select>
@@ -641,6 +641,11 @@ function EmptyGeneration({
   );
 }
 
+function sectionChoice(section: CourseSection): string {
+  const when = scheduleSummary(section).replaceAll(" – ", "–");
+  return `${section.crn} · ${when} · ${Math.max(0, section.seatsRemaining)} open`;
+}
+
 function minutesToTime(minutes?: number | null): string {
   if (minutes == null) return "";
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -657,7 +662,7 @@ async function copyCrns(sections: CourseSection[]) {
   await navigator.clipboard.writeText(text);
 }
 
-const BLOCKED_PAINT = { fill: "rgba(110,97,100,0.16)", stroke: "#6e6164", text: "#3d3336" };
+const BLOCKED_PAINT = { fill: "var(--blocked-fill)", stroke: "var(--blocked-stroke)", text: "var(--blocked-ink)" };
 const NAME_IDEAS = ["Club meeting", "Work", "Commute", "Team practice", "Appointment", "Study group"];
 
 function blocksFromBlocked(blocks: BlockedTime[]) {

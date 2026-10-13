@@ -7,7 +7,7 @@ import Link from "next/link";
 
 export function ProfessorView({ name }: { name: string }) {
   const { index, termCode, user } = useApp();
-  if (!index) return <p className="text-muted">Loading…</p>;
+  if (!index) return <p className="state text-muted">Loading this professor’s sections…</p>;
   const person = index.instructors.find((item) => item.name === name || instructorDisplayName(item.name) === name);
   if (!person) {
     return (

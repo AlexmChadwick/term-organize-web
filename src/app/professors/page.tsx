@@ -6,6 +6,18 @@ import { courseColorForCode, instructorDisplayName } from "@/lib/models";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+function ProfessorMark({ name }: { name: string }) {
+  const color = courseColorForCode(name);
+  return (
+    <span
+      className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-sm font-semibold"
+      style={{ background: color.fill, color: color.stroke, boxShadow: `inset 0 0 0 1px ${color.stroke}` }}
+    >
+      {instructorDisplayName(name).slice(0, 1)}
+    </span>
+  );
+}
+
 export default function ProfessorsPage() {
   const { index } = useApp();
   const [query, setQuery] = useState("");
@@ -18,7 +30,7 @@ export default function ProfessorsPage() {
     return list.slice(0, 80);
   }, [index, query]);
 
-  if (!index) return <p className="text-muted">Loading instructors…</p>;
+  if (!index) return <p className="state text-muted">Loading instructors…</p>;
 
   return (
     <div className="grid gap-4">
@@ -31,13 +43,8 @@ export default function ProfessorsPage() {
         {people.map((person) => (
           <li key={person.name}>
             <Link className="card flex items-center gap-3 p-4 hover:border-accent" href={`/professor/${encodeURIComponent(person.name)}`}>
-              <span
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-sm font-semibold text-white"
-                style={{ background: courseColorForCode(person.displayName).stroke }}
-              >
-                {instructorDisplayName(person.name).slice(0, 1)}
-              </span>
-              <div>
+              <ProfessorMark name={person.displayName} />
+              <div className="min-w-0">
                 <div className="font-semibold">{instructorDisplayName(person.name)}</div>
                 <div className="text-sm text-muted">
                   {person.courseKeys.length} course{person.courseKeys.length === 1 ? "" : "s"} · {person.crns.length} sections
@@ -48,7 +55,7 @@ export default function ProfessorsPage() {
           </li>
         ))}
       </ul>
-      {query && !people.length ? <p className="text-muted">No instructor matches that name.</p> : null}
+      {query && !people.length ? <p className="state text-muted">No instructor matches that name.</p> : null}
       {!query ? <p className="text-sm text-muted">Showing the first 80. Type a name to narrow the list.</p> : null}
     </div>
   );
