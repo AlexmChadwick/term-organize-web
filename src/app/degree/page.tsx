@@ -144,7 +144,7 @@ export default function DegreePage() {
     setNotice(change.message);
   }
 
-  const visiblePrograms = programs.filter((program) => program.title.toLowerCase().includes(programQuery.toLowerCase())).slice(0, 40);
+  const visiblePrograms = programs.filter((program) => program.title.toLowerCase().includes(programQuery.toLowerCase()));
 
   return (
     <div className="grid gap-5">
@@ -301,7 +301,10 @@ export default function DegreePage() {
                   className="w-full rounded-lg px-2 py-1 text-left hover:bg-surface-2"
                   type="button"
                   onClick={() => {
-                    if (!plan) return;
+                    if (!plan) {
+                      setNotice("Start a degree plan before choosing a program.");
+                      return;
+                    }
                     const year: CatalogYear = { startYear: plan.catalogYear ?? editions.current.startYear };
                     const base = year.startYear === editions.current.startYear ? "https://catalog.northeastern.edu/" : `https://catalog.northeastern.edu/archive/${year.startYear}-${year.startYear + 1}/`;
                     const url = programURL(base, program.path);
@@ -330,6 +333,13 @@ export default function DegreePage() {
               </li>
             ))}
           </ul>
+        ) : null}
+        {programs.length ? (
+          <p className="text-sm text-muted">
+            {visiblePrograms.length === programs.length
+              ? `${programs.length.toLocaleString()} programs`
+              : `${visiblePrograms.length.toLocaleString()} of ${programs.length.toLocaleString()} programs`}
+          </p>
         ) : null}
         {programQuery.trim() && programs.length > 0 && !visiblePrograms.length ? <p className="text-sm text-muted">No program title matches that.</p> : null}
         {requirements ? (

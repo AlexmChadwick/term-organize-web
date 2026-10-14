@@ -105,6 +105,41 @@ test("degree plan PDF round-trip and a catalog audit", async ({ page }) => {
   await expect(page.locator("li").filter({ hasText: "CS 3000" }).filter({ hasText: /complete|partial|missing|planned/ }).first()).toBeVisible();
 });
 
+test("program search keeps matches past the first forty", async ({ page }) => {
+  const links = Array.from({ length: 45 }, (_, index) => {
+    const n = String(index + 1).padStart(2, "0");
+    return `<a href="/undergraduate/sample/p${n}/">Applied Science ${n}, BS</a>`;
+  });
+  links.push(`<a href="/undergraduate/computer-information-science/computer-science/bscs-oak/">Zed Computer Science, BSCS (Oakland)</a>`);
+  const indexHtml = links.join("");
+  const programHtml = `
+<html><body>
+<div id="programrequirementstextcontainer" class="tab_content">
+<table class="sc_courselist"><tbody>
+<tr class="odd"><td class="codecol"><a class="bubblelink code">CS&#160;3000</a></td><td>Algorithms and Data</td><td class="hourscol">4</td></tr>
+</tbody></table>
+</div>
+</body></html>`;
+  await page.route("**/api/catalog-site**", async (route) => {
+    const target = new URL(route.request().url()).searchParams.get("url") ?? "";
+    const body = target.includes("azindex") ? indexHtml : programHtml;
+    await route.fulfill({ status: 200, contentType: "text/html", body });
+  });
+
+  await page.goto("/degree");
+  await page.getByRole("button", { name: "Load programs" }).click();
+  await page.getByRole("button", { name: "Applied Science 01, BS" }).click();
+  await expect(page.getByText("Start a degree plan before choosing a program.")).toBeVisible();
+
+  await page.getByPlaceholder("Computer Science, BS").fill("Science");
+  const hidden = page.getByRole("button", { name: "Zed Computer Science, BSCS (Oakland)" });
+  await expect(hidden).toBeVisible();
+  await page.getByRole("button", { name: "New plan" }).click();
+  await hidden.click();
+  await expect(page.getByText("Reading Zed Computer Science, BSCS (Oakland)…")).toHaveCount(0);
+  await expect(page.locator("li").filter({ hasText: "CS 3000" }).first()).toBeVisible();
+});
+
 test("degree plan, professors, and the watchlist", async ({ page }) => {
   await page.goto("/degree");
   await expect(page.getByRole("heading", { name: "Degree plan" })).toBeVisible();
