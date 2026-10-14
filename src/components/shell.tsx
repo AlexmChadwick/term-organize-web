@@ -1,7 +1,11 @@
 "use client";
 
+/**
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import { useApp } from "@/lib/app-state";
-import { UNOFFICIAL_NOTICE } from "@/lib/legal";
+import { SOURCE_URL, UNOFFICIAL_NOTICE } from "@/lib/legal";
 import { Bell, CalendarDays, DoorOpen, GraduationCap, Moon, Search, Settings, Sun, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -64,6 +68,10 @@ export function Shell({ children }: { children: ReactNode }) {
         <Link href="/legal" className="underline">
           About and license
         </Link>
+        {" · "}
+        <a className="underline" href={SOURCE_URL}>
+          Source code
+        </a>
       </p>
       <nav className="bottom-nav" aria-label="Mobile">
         {LINKS.slice(0, 4).map((link) => (

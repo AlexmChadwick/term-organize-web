@@ -1,8 +1,12 @@
 "use client";
 
+/**
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import { Button, Modal, Select, TextInput } from "@/components/ui";
 import { useApp, type ThemeChoice } from "@/lib/app-state";
-import { UNOFFICIAL_NOTICE } from "@/lib/legal";
+import { SOURCE_URL, UNOFFICIAL_NOTICE } from "@/lib/legal";
 import { emptyUserData, mergeUserData } from "@/lib/user";
 import Link from "next/link";
 import { useState } from "react";
@@ -131,7 +135,7 @@ export default function SettingsPage() {
         <Link className="underline" href="/license">
           Read the license
         </Link>
-        <a className="underline" href="https://github.com/AlexmChadwick/Northeastern-Term-Organize">
+        <a className="underline" href={SOURCE_URL}>
           Source code
         </a>
       </section>
