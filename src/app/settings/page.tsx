@@ -70,7 +70,7 @@ export default function SettingsPage() {
             onChange={(event) => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, watchlistIntervalMinutes: Math.min(120, Math.max(1, Number(event.target.value) || 15)) } }))}
           />
         </label>
-        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Fall 2026 ships with the site. Any other term is downloaded from Banner the first time you open it, including that term’s own course descriptions, then kept in this browser.</p>
+        <p className="text-sm text-muted">Current term code {termCode}. Change it from the header. Fall 2026 and Spring 2027 ship with the site. Any other term is downloaded from Banner the first time you open it, including that term’s own course descriptions, then kept in this browser.</p>
         <Button variant="ghost" type="button" onClick={() => void rebuildTerm()} disabled={catalogStatus === "building"}>
           {catalogStatus === "building" ? "Downloading this term…" : "Rebuild this term from Banner"}
         </Button>

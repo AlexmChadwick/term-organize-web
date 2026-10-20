@@ -40,7 +40,7 @@ This site ports the user-facing behavior of Term Organize that a browser can do.
 | Live Activities | Up next while the tab is open | Omitted. |
 | Siri / App Intents / Spotlight | Site search and URLs | Omitted. |
 | Mac-only windows, menus, and multi-window course UI | Responsive pages | Omitted. The same tasks are pages. |
-| Catalog snapshot tool (`Tools/CatalogSnapshot`) | `data/term-202710.json.gz`, `POST /api/catalog/[term]`, `POST /api/catalog/[term]/details` | Fall 2026 ships with descriptions. Another term’s sections are downloaded on demand, then each course’s description, requisites, and catalog title are read from that term’s Banner pages (a batch at a time) and stored. Catalog archives are JSON, not LZFSE. |
+| Catalog snapshot tool (`Tools/CatalogSnapshot`) | `data/term-202710.json.gz`, `data/term-202730.json.gz`, `POST /api/catalog/[term]`, `POST /api/catalog/[term]/details` | Fall 2026 and Spring 2027 ship with descriptions. Another term’s sections are downloaded on demand, then each course’s description, requisites, and catalog title are read from that term’s Banner pages (a batch at a time) and stored. Catalog archives are JSON, not LZFSE. |
 
 ## Tests
 

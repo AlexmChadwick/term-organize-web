@@ -1,9 +1,43 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import type { TermCatalog } from "./models";
+import type { Instructor, TermCatalog } from "./models";
 
 const memory = new Map<string, TermCatalog>();
+
+/** Whole address, exact domain. Subdomains such as husky.neu.edu do not match. */
+const EXACT_WORK_EMAIL = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
+
+/**
+ * Banner sometimes stores several addresses in one instructor field. Keep only
+ * addresses whose domain is exactly northeastern.edu or neu.edu. A single
+ * published address is left as it is, so the Fall 2026 snapshot is unchanged.
+ * An omitted email stays omitted: this never fills one in.
+ */
+export function publishedInstructorEmail(email: string): string | undefined {
+  if (!/\s/.test(email)) return email;
+  const kept = email.split(/\s+/).filter((part) => EXACT_WORK_EMAIL.test(part));
+  return kept.length > 0 ? kept.join(" ") : undefined;
+}
+
+/** Accepts instructors that omit `email` instead of writing null. */
+export function normalizeBundledCatalog(catalog: TermCatalog): TermCatalog {
+  for (const section of catalog.sections) {
+    for (const instructor of section.instructors ?? []) {
+      acceptInstructorEmail(instructor);
+    }
+  }
+  return catalog;
+}
+
+function acceptInstructorEmail(instructor: Instructor): void {
+  if (!("email" in instructor)) return;
+  const email = instructor.email;
+  if (typeof email !== "string") return;
+  const next = publishedInstructorEmail(email);
+  if (next === undefined) delete instructor.email;
+  else if (next !== email) instructor.email = next;
+}
 
 function bundledPath(term: string): string {
   return path.join(process.cwd(), "data", `term-${term}.json.gz`);
@@ -18,7 +52,7 @@ export async function loadBundledCatalog(term: string): Promise<TermCatalog | nu
   if (cached) return cached;
   try {
     const json = gunzipSync(await readFile(bundledPath(term))).toString("utf8");
-    const catalog = JSON.parse(json) as TermCatalog;
+    const catalog = normalizeBundledCatalog(JSON.parse(json) as TermCatalog);
     memory.set(`bundled:${term}`, catalog);
     return catalog;
   } catch {
