@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "./catalog-index";
 import { loadBundledCatalog, normalizeBundledCatalog } from "./catalog-store";
@@ -42,6 +45,28 @@ describe("bundled catalog emails", () => {
 });
 
 describe("Spring 2027 snapshot", () => {
+  it("contains no email domains other than northeastern.edu or neu.edu", () => {
+    const file = path.join(process.cwd(), "data", "term-202730.json.gz");
+    const catalog = JSON.parse(gunzipSync(readFileSync(file)).toString("utf8")) as TermCatalog;
+    const domains = new Set<string>();
+    for (const section of catalog.sections) {
+      for (const instructor of section.instructors ?? []) {
+        if (!("email" in instructor)) continue;
+        expect(typeof instructor.email).toBe("string");
+        const addresses = instructor.email?.split(/\s+/).filter(Boolean) ?? [];
+        expect(addresses.length).toBeGreaterThan(0);
+        for (const address of addresses) {
+          expect(address).toMatch(EXACT_WORK_EMAIL);
+          const domain = address.split("@")[1]?.toLowerCase();
+          expect(domain).toBeDefined();
+          if (domain) domains.add(domain);
+        }
+      }
+    }
+    expect(domains.size).toBeGreaterThan(0);
+    expect([...domains].every((domain) => domain === "northeastern.edu" || domain === "neu.edu")).toBe(true);
+  });
+
   it("loads the bundled term when instructor emails are omitted", async () => {
     const catalog = await loadBundledCatalog("202730");
     expect(catalog).not.toBeNull();
