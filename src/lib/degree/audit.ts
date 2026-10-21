@@ -1,5 +1,5 @@
 /**
- * Degree-requirements audit: each course counts once, toward the matching that meets the most.
+ * Degree-requirements audit. A course number counts once unless the entries are distinct manual sections.
  *
  * Copyright (C) 2026 Term Organize contributors.
  * SPDX-License-Identifier: AGPL-3.0-only
@@ -8,6 +8,7 @@
  * DegreeRequirementsSupport.swift, and the range-limit helpers the audit applies.
  */
 
+import { entriesCountSeparately } from "@/lib/degree-logic";
 import { CourseEquivalences, equivalencesFromDeclarations } from "@/lib/equivalences";
 import type { CourseKey } from "@/lib/models";
 import { compareCourseKeys, creditNumber, keyId, sameKey, type NuPathInfo } from "@/lib/models";
@@ -76,6 +77,7 @@ export interface CourseUse {
   satisfies?: CourseKey;
   instance: number;
   id: string;
+  crn?: string | null;
 }
 
 export function courseUseIsCompleted(use: CourseUse): boolean {
@@ -591,9 +593,10 @@ class AuditEngine {
         bySubstitution: false,
         instance: 0,
         id: keyId(key),
+        crn: course.crn ?? null,
       };
       const earlier = (this.instances.get(keyId(key)) ?? []).map((id) => this.pool.get(id)!).filter(Boolean);
-      const repeated = earlier.find((use) => !courseCountsSeparately(draft.title, draft.credits, use.title, use.credits));
+      const repeated = earlier.find((use) => !entriesCountSeparately(draft, use));
       if (repeated) {
         const better = courseUseIsCompleted(repeated) === courseUseIsCompleted(draft)
           ? draft.credits > repeated.credits
@@ -928,6 +931,10 @@ class AuditEngine {
   }
 
   private nupaths(use: CourseUse): Set<NuPathInfo> | null {
+    if (use.crn) {
+      const specific = this.attributes.nupaths.get(`${keyId(use.key)}#${use.crn}`);
+      if (specific) return nuPathSet(specific);
+    }
     const own = this.attributes.nupaths.get(keyId(use.key));
     if (own) return nuPathSet(own);
     if (isCoopCourse(use)) return new Set();

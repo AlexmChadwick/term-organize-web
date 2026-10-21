@@ -303,6 +303,10 @@ export interface ReorderMove {
   course: CourseKey;
   from: string;
   to: string;
+  /** Which plan entry to move when the course number appears more than once. */
+  entryID?: string;
+  /** The pinned section, when that entry has one. */
+  crn?: string;
 }
 
 export interface ReorderSuggestion {
@@ -338,11 +342,33 @@ function copyPlan(plan: DegreePlan): DegreePlan {
   };
 }
 
-function performMove(plan: DegreePlan, course: CourseKey, from: string, to: string): boolean {
+function distinctEntries(plan: DegreePlan, key: CourseKey): number {
+  let count = 0;
+  for (const term of plan.terms) for (const item of term.courses) if (item.key && sameKey(item.key, key)) count += 1;
+  return count;
+}
+
+function entryMove(plan: DegreePlan, course: DegreePlanCourse, key: CourseKey, from: string, to: string): ReorderMove {
+  const move: ReorderMove = { course: key, from, to };
+  if (distinctEntries(plan, key) > 1) {
+    move.entryID = course.id;
+    if (course.crn) move.crn = course.crn;
+  }
+  return move;
+}
+
+function courseLabel(plan: DegreePlan, course: DegreePlanCourse, key: CourseKey): string {
+  return distinctEntries(plan, key) > 1 && course.crn ? `${keyId(key)} (CRN ${course.crn})` : keyId(key);
+}
+
+function performMove(plan: DegreePlan, course: CourseKey, from: string, to: string, entryID?: string): boolean {
   const source = plan.terms.findIndex((term) => term.id === from);
   const target = plan.terms.findIndex((term) => term.id === to);
   if (source < 0 || target < 0) return false;
-  const position = plan.terms[source]!.courses.findIndex((item) => item.key && sameKey(item.key, course));
+  const position = plan.terms[source]!.courses.findIndex((item) => {
+    if (!item.key || !sameKey(item.key, course)) return false;
+    return entryID ? item.id === entryID : true;
+  });
   if (position < 0) return false;
   const [moved] = plan.terms[source]!.courses.splice(position, 1);
   if (!moved) return false;
@@ -487,16 +513,16 @@ class Engine {
     if (offering == null) return null;
     const total = termCredits(semester) + course.credits;
     if (total > this.maxCredits) return null;
-    const move: ReorderMove = { course: key, from: this.plan.terms[this.origin]!.id, to: semester.id };
+    const move = entryMove(this.plan, course, key, this.plan.terms[this.origin]!.id, semester.id);
     const changed = copyPlan(this.plan);
-    if (!performMove(changed, key, move.from, move.to)) return null;
+    if (!performMove(changed, key, move.from, move.to, move.entryID)) return null;
     const after = this.checksAfter(changed, new Set([course.id]));
     if (!after) return null;
     const check = after.get(course.id) ?? "unknown";
     const suggestion: ReorderSuggestion = {
       id: `move-${keyId(key)}-${semester.id}`,
       moves: [move],
-      title: `Move ${keyId(key)} to ${termShort(semester)}`,
+      title: `Move ${courseLabel(this.plan, course, key)} to ${termShort(semester)}`,
       reasons: [
         this.offeringReason(key, semester.season, false),
         this.prerequisiteReason(key, check, this.before.get(course.id) === "met", false),
@@ -525,12 +551,12 @@ class Engine {
     const newTarget = termCredits(semester) - partner.credits + course.credits;
     if (newHome > Math.max(this.maxCredits, termCredits(home)) || newTarget > Math.max(this.maxCredits, termCredits(semester))) return null;
     const moves: ReorderMove[] = [
-      { course: key, from: home.id, to: semester.id },
-      { course: partnerKey, from: semester.id, to: home.id },
+      entryMove(this.plan, course, key, home.id, semester.id),
+      entryMove(this.plan, partner, partnerKey, semester.id, home.id),
     ];
     const changed = copyPlan(this.plan);
     for (const move of moves) {
-      if (!performMove(changed, move.course, move.from, move.to)) return null;
+      if (!performMove(changed, move.course, move.from, move.to, move.entryID)) return null;
     }
     const after = this.checksAfter(changed, new Set([course.id, partner.id]));
     if (!after) return null;
@@ -539,7 +565,7 @@ class Engine {
     const suggestion: ReorderSuggestion = {
       id: `swap-${keyId(key)}-${semester.id}-${keyId(partnerKey)}`,
       moves,
-      title: `Move ${keyId(key)} to ${termShort(semester)} and ${keyId(partnerKey)} to ${termShort(home)}`,
+      title: `Move ${courseLabel(this.plan, course, key)} to ${termShort(semester)} and ${courseLabel(this.plan, partner, partnerKey)} to ${termShort(home)}`,
       reasons: [
         this.offeringReason(key, semester.season, true),
         this.offeringReason(partnerKey, home.season, true),
@@ -570,15 +596,15 @@ class Engine {
       const changed = copyPlan(this.plan);
       changed.terms.push({ ...semester, courses: [] });
       sortPlanTerms(changed);
-      const move: ReorderMove = { course: key, from: home.id, to: semester.id };
-      if (!performMove(changed, key, move.from, move.to)) continue;
+      const move = entryMove(this.plan, course, key, home.id, semester.id);
+      if (!performMove(changed, key, move.from, move.to, move.entryID)) continue;
       const after = this.checksAfter(changed, new Set([course.id]));
       if (!after) continue;
       const check = after.get(course.id) ?? "unknown";
       const suggestion: ReorderSuggestion = {
         id: `move-${keyId(key)}-${semester.id}`,
         moves: [move],
-        title: `Move ${keyId(key)} to a new ${termShort(semester)} semester`,
+        title: `Move ${courseLabel(this.plan, course, key)} to a new ${termShort(semester)} semester`,
         reasons: [
           this.offeringReason(key, semester.season, false),
           this.prerequisiteReason(key, check, this.before.get(course.id) === "met", false),
@@ -626,13 +652,16 @@ export function reorderSuggestions(options: {
   );
   const candidates: { suggestion: ReorderSuggestion; rank: Rank }[] = [];
   const seen = new Set<string>();
+  const blockingSet = new Set(options.blocking.map((item) => keyId(item)));
   options.blocking.forEach((key, order) => {
-    const id = keyId(key);
-    if (seen.has(id)) return;
-    seen.add(id);
-    const course = plan.terms[origin]!.courses.find((item) => item.key && sameKey(item.key, key));
-    if (!course) return;
-    candidates.push(...engine.candidates(course, order, new Set(options.blocking.map((item) => keyId(item)))));
+    const matches = plan.terms[origin]!.courses.filter((item) => item.key && sameKey(item.key, key));
+    const targets = matches.length > 1 ? matches : matches.slice(0, 1);
+    for (const course of targets) {
+      const mark = matches.length > 1 && course?.crn ? `${keyId(key)}#${course.crn}` : keyId(key);
+      if (seen.has(mark) || !course) continue;
+      seen.add(mark);
+      candidates.push(...engine.candidates(course, order, blockingSet));
+    }
   });
   candidates.sort((a, b) => rankCompare(a.rank, b.rank));
   return candidates.slice(0, MAX_REORDER_SUGGESTIONS).map((candidate) => candidate.suggestion);
@@ -652,7 +681,7 @@ export function applyReorderSuggestion(suggestion: ReorderSuggestion, plan: Degr
     }
   }
   for (const move of suggestion.moves) {
-    if (!performMove(updated, move.course, move.from, semesterID.get(move.to) ?? move.to)) return;
+    if (!performMove(updated, move.course, move.from, semesterID.get(move.to) ?? move.to, move.entryID)) return;
   }
   plan.terms = updated.terms;
 }

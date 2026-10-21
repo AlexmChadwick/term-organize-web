@@ -212,7 +212,7 @@ export default function DegreePage() {
             save({ ...plan, terms: draft.terms, updatedAt: Date.now() });
             setNotice("Added courses from your primary schedules into matching semesters.");
           }}
-          lookupPrereq={(key, termIndex) => prerequisiteStatus(key, termIndex, plan, index, core.requisite, core.equivalences)}
+          lookupPrereq={(key, termIndex, crn) => prerequisiteStatus(key, termIndex, plan, index, core.requisite, core.equivalences, crn)}
           index={index}
           prompts={prompts?.forPlanCourses ?? []}
           retiredNote={(key) => core.retiredNote(key) ?? extra.retiredNote(key)}
@@ -441,7 +441,7 @@ function PlanEditor({
   onExportText: () => void;
   onExportPDF: () => void;
   onAutofill: () => void;
-  lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number) => { kind: string; text?: string };
+  lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number, crn?: string | null) => { kind: string; text?: string };
   index: CatalogIndex | null;
   onMove: (option: MoveOption) => void;
   prompts: DegreeEquivalencePrompt[];
@@ -538,7 +538,7 @@ function PlanEditor({
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
-              const status = lookupPrereq(course.key, termIndex);
+              const status = lookupPrereq(course.key, termIndex, course.crn);
               if (status.kind !== "missing") return null;
               return (
                 <li key={course.id} className="text-warn">
@@ -557,14 +557,14 @@ function PlanEditor({
 function blockingCourses(
   term: DegreePlanTerm,
   termIndex: number,
-  lookupPrereq: (key: CourseKey, termIndex: number) => { kind: string },
+  lookupPrereq: (key: CourseKey, termIndex: number, crn?: string | null) => { kind: string },
   index: CatalogIndex | null,
 ): CourseKey[] {
   const seen = new Set<string>();
   const keys: CourseKey[] = [];
   for (const course of term.courses) {
     if (!course.key) continue;
-    const missing = lookupPrereq(course.key, termIndex).kind === "missing";
+    const missing = lookupPrereq(course.key, termIndex, course.crn).kind === "missing";
     const unoffered = index != null && planTermMatches(term, index.catalog.term) && index.sectionsOf(course.key).length === 0;
     if (!missing && !unoffered) continue;
     const id = keyId(course.key);

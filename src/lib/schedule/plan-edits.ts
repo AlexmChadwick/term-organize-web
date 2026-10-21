@@ -34,6 +34,7 @@ import {
   type ScheduleRelaxation,
 } from "@/lib/schedule/generator";
 import { sectionIsFull } from "@/lib/schedule/preference-rules";
+import { canPlacePlanCourse } from "@/lib/schedule/pins";
 import type { AppPreferences, PlanCourse, SchedulePlan } from "@/lib/user";
 import { emptyPlanFilters, newId, nextColorIndex } from "@/lib/user";
 
@@ -150,12 +151,29 @@ export class ResolvedPlan {
     const entries: ResolvedEntry[] = [];
     for (const planCourse of plan.courses) {
       const all = index?.sectionsOf(planCourse.key) ?? [];
+      const siblingPins = new Set(
+        plan.courses.flatMap((course) => (course !== planCourse && course.pinnedCRN && sameKey(course.key, planCourse.key) ? [course.pinnedCRN] : [])),
+      );
       const selected = plan.selectedCRNs.flatMap((crn) => {
         const section = bySection.get(crn);
         if (!section || !sameKey({ subject: section.subject, number: section.number }, planCourse.key)) return [];
+        if (planCourse.pinnedCRN) {
+          if (crn !== planCourse.pinnedCRN) return [];
+        } else if (siblingPins.has(crn) || claimed.has(crn)) {
+          return [];
+        } else if (plan.courses.some((course) => course !== planCourse && !course.pinnedCRN && sameKey(course.key, planCourse.key))) {
+          return [];
+        }
         claimed.add(crn);
         return [section];
       });
+      if (planCourse.pinnedCRN && !claimed.has(planCourse.pinnedCRN)) {
+        const section = bySection.get(planCourse.pinnedCRN);
+        if (section) {
+          claimed.add(planCourse.pinnedCRN);
+          selected.push(section);
+        }
+      }
       const course = index?.course(planCourse.key) ?? null;
       const catalogAvailable = index != null;
       entries.push({
@@ -545,22 +563,39 @@ export class PlanDataStore {
     current.updatedAt = Date.now();
   }
 
-  /** Adds a course (no-op if present). Returns false when it was already there. */
-  addCourse(key: CourseKey, planID: string, required = true): boolean {
+  /** Adds a course. A second copy is refused unless `pinnedCRN` is a new manual section. */
+  addCourse(key: CourseKey, planID: string, required = true, pinnedCRN?: string | null): boolean {
     let added = false;
     this.updatePlan(planID, (plan) => {
-      if (plan.courses.some((course) => sameKey(course.key, key))) return;
-      plan.courses.push({ key, isRequired: required, excludedCRNs: [], colorIndex: nextColorIndex(plan) });
+      if (!canPlacePlanCourse(plan.courses, key, pinnedCRN)) return;
+      plan.courses.push({
+        key,
+        isRequired: required,
+        excludedCRNs: [],
+        colorIndex: nextColorIndex(plan),
+        ...(pinnedCRN ? { pinnedCRN } : {}),
+      });
+      if (pinnedCRN && !plan.selectedCRNs.includes(pinnedCRN)) plan.selectedCRNs.push(pinnedCRN);
       added = true;
     });
     return added;
   }
 
-  /** Removes a course, its chosen sections, and favorite combinations that used them. */
-  removeCourse(key: CourseKey, planID: string, sectionsOfCourse: readonly string[] = []): void {
+  /**
+   * Removes the unpinned entry, or the entry pinned to `pinnedCRN`.
+   * Other sections of the same course number stay.
+   */
+  removeCourse(key: CourseKey, planID: string, sectionsOfCourse: readonly string[] = [], pinnedCRN?: string | null): void {
     const crns = new Set(sectionsOfCourse);
     this.updatePlan(planID, (plan) => {
-      plan.courses = plan.courses.filter((course) => !sameKey(course.key, key));
+      const index = plan.courses.findIndex((course) => sameKey(course.key, key) && (pinnedCRN ? course.pinnedCRN === pinnedCRN : !course.pinnedCRN));
+      if (index < 0) return;
+      const removed = plan.courses[index]!;
+      if (removed.pinnedCRN) {
+        crns.clear();
+        crns.add(removed.pinnedCRN);
+      }
+      plan.courses = plan.courses.filter((_, offset) => offset !== index);
       plan.selectedCRNs = plan.selectedCRNs.filter((crn) => !crns.has(crn));
       plan.favoriteCombinations = plan.favoriteCombinations.filter((combination) => !combination.some((crn) => crns.has(crn)));
     });
@@ -581,23 +616,27 @@ export function removePlanCourse(
   index: CatalogIndex | null,
   store: PlanDataStore,
 ): PlanCourseRemoval {
-  const crns = new Set(entry.courseCRNs);
-  for (const section of entry.selected) crns.add(section.crn);
-  if (index) for (const section of index.sectionsOf(entry.key)) crns.add(section.crn);
-  const indexInPlan = plan.courses.findIndex((course) => sameKey(course.key, entry.key));
+  const siblingPins = new Set(
+    plan.courses.flatMap((course) => (course !== entry.planCourse && course.pinnedCRN ? [course.pinnedCRN] : [])),
+  );
+  const crns = new Set<string>();
+  if (entry.planCourse.pinnedCRN) crns.add(entry.planCourse.pinnedCRN);
+  else if (index) for (const section of index.sectionsOf(entry.key)) if (!siblingPins.has(section.crn)) crns.add(section.crn);
+  for (const section of entry.selected) if (!siblingPins.has(section.crn)) crns.add(section.crn);
+  const indexInPlan = plan.courses.indexOf(entry.planCourse);
   const removal: PlanCourseRemoval = {
     course: entry.planCourse,
     index: indexInPlan < 0 ? plan.courses.length : indexInPlan,
     selectedCRNs: plan.selectedCRNs.filter((crn) => crns.has(crn)),
     favoriteCombinations: plan.favoriteCombinations.filter((combination) => combination.some((crn) => crns.has(crn))),
   };
-  store.removeCourse(entry.key, plan.id, [...crns]);
+  store.removeCourse(entry.key, plan.id, [...crns], entry.planCourse.pinnedCRN);
   return removal;
 }
 
 /** Puts back exactly the course that was removed, with its sections and favorites. */
 export function restorePlanCourse(removal: PlanCourseRemoval, plan: SchedulePlan): void {
-  if (plan.courses.some((course) => sameKey(course.key, removal.course.key))) return;
+  if (!canPlacePlanCourse(plan.courses, removal.course.key, removal.course.pinnedCRN)) return;
   const at = Math.min(Math.max(0, removal.index), plan.courses.length);
   plan.courses.splice(at, 0, removal.course);
   for (const crn of removal.selectedCRNs) {

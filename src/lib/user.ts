@@ -30,6 +30,8 @@ export interface PlanCourse {
   isRequired: boolean;
   excludedCRNs: string[];
   colorIndex: number;
+  /** Manual section choice. Identity is this CRN in the plan's term. */
+  pinnedCRN?: string;
 }
 
 export interface SchedulePlan {
@@ -54,6 +56,11 @@ export interface SchedulePlan {
   isPrimary: boolean;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Set once existing selected CRNs have been copied onto `pinnedCRN`.
+   * Generated weeks after that stay unpinned, so a later search can still change them.
+   */
+  manualPinsMigrated?: boolean;
 }
 
 export interface WatchItem {

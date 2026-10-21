@@ -354,6 +354,8 @@ export interface DegreePlanCourse {
   label: string;
   title: string;
   credits: number;
+  /** Set when the student picked a section. Two entries may share a course number only when these differ. */
+  crn?: string | null;
 }
 
 export interface DegreePlanTerm {

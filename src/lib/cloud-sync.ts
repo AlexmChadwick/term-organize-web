@@ -113,6 +113,7 @@ export interface PlanCourse {
   isRequired: boolean;
   excludedCRNs: string[];
   colorIndex: number;
+  pinnedCRN?: string;
 }
 
 export interface SchedulePlan {
@@ -214,6 +215,7 @@ export interface DegreePlanCourse {
   label: string;
   title: string;
   credits: number;
+  crn?: string | null;
 }
 
 export function makeDegreeCourse(key: CourseKey, title: string, credits: number, id = crypto.randomUUID()): DegreePlanCourse {
@@ -509,6 +511,7 @@ function planCourseJSON(course: PlanCourse): Record<string, unknown> {
     excludedCRNs: course.excludedCRNs,
     isRequired: course.isRequired,
     key: courseJSON(course.key),
+    ...(course.pinnedCRN ? { pinnedCRN: course.pinnedCRN } : {}),
   };
 }
 
@@ -535,6 +538,7 @@ function degreeCourseJSON(course: DegreePlanCourse): Record<string, unknown> {
     key: course.key ? courseJSON(course.key) : null,
     label: course.label,
     title: course.title,
+    crn: course.crn ?? null,
   });
 }
 
@@ -740,6 +744,7 @@ function decodeSchedule(value: unknown): SchedulePlan {
       isRequired: c.isRequired !== false,
       excludedCRNs: Array.isArray(c.excludedCRNs) ? c.excludedCRNs.filter((crn): crn is string => typeof crn === "string") : [],
       colorIndex: reqNumber(c, "colorIndex", 0),
+      ...(typeof c.pinnedCRN === "string" ? { pinnedCRN: c.pinnedCRN } : {}),
     };
   }) : [];
   return {
@@ -766,6 +771,7 @@ function decodeDegreeCourse(value: unknown): DegreePlanCourse {
     label: reqString(o, "label", key ? courseKeyDescription(key) : ""),
     title: reqString(o, "title"),
     credits: reqNumber(o, "credits", 0),
+    ...(typeof o.crn === "string" ? { crn: o.crn } : {}),
   };
 }
 

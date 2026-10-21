@@ -9,7 +9,8 @@
  */
 
 import { bannerCodeForSeason } from "@/lib/degree-format";
-import { creditNumber, keyId, sameKey, termApproximateWindow, type CourseKey } from "@/lib/models";
+import { creditNumber, keyId, termApproximateWindow, type CourseKey } from "@/lib/models";
+import { canPlacePlanCourse } from "@/lib/schedule/pins";
 import { PLAN_SEASON_EXPORT, termCredits, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm } from "@/lib/requirements";
 import { emptyPlanFilters, newId, nextColorIndex, type SchedulePlan } from "@/lib/user";
 
@@ -78,21 +79,21 @@ export interface SemesterSchedule {
  */
 export function scheduleForDegreePlan(plans: SchedulePlan[], semester: DegreePlanTerm, termCode: string): SemesterSchedule | null {
   const seen = new Set<string>();
-  const keys: CourseKey[] = [];
+  const entries: { key: CourseKey; crn: string | null }[] = [];
   for (const course of semester.courses) {
     if (!course.key) continue;
-    const id = keyId(course.key);
+    const id = course.crn ? `${keyId(course.key)}#${course.crn}` : keyId(course.key);
     if (seen.has(id)) continue;
     seen.add(id);
-    keys.push(course.key);
+    entries.push({ key: course.key, crn: course.crn ?? null });
   }
-  if (keys.length === 0) return null;
-  const wanted = new Set(keys.map((key) => keyId(key)));
+  if (entries.length === 0) return null;
+  const wanted = new Set(entries.map((entry) => (entry.crn ? `${keyId(entry.key)}#${entry.crn}` : keyId(entry.key))));
   const existing = plansInTerm(plans, termCode).find((plan) => sameCourseSet(plan, wanted));
-  if (existing) return { plan: existing, isNew: false, courseCount: keys.length };
+  if (existing) return { plan: existing, isNew: false, courseCount: entries.length };
   const schedule = createSchedulePlan(plans, scheduleName(semester, plansInTerm(plans, termCode).map((plan) => plan.name)), termCode);
-  for (const key of keys) addScheduleCourse(schedule, key);
-  return { plan: schedule, isNew: true, courseCount: keys.length };
+  for (const entry of entries) addScheduleCourse(schedule, entry.key, entry.crn);
+  return { plan: schedule, isNew: true, courseCount: entries.length };
 }
 
 function plansInTerm(plans: readonly SchedulePlan[], termCode: string): SchedulePlan[] {
@@ -102,7 +103,7 @@ function plansInTerm(plans: readonly SchedulePlan[], termCode: string): Schedule
 }
 
 function sameCourseSet(plan: SchedulePlan, wanted: ReadonlySet<string>): boolean {
-  const have = new Set(plan.courses.map((course) => keyId(course.key)));
+  const have = new Set(plan.courses.map((course) => (course.pinnedCRN ? `${keyId(course.key)}#${course.pinnedCRN}` : keyId(course.key))));
   if (have.size !== wanted.size) return false;
   for (const id of wanted) if (!have.has(id)) return false;
   return true;
@@ -126,9 +127,16 @@ function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: strin
   return plan;
 }
 
-function addScheduleCourse(plan: SchedulePlan, key: CourseKey): void {
-  if (plan.courses.some((course) => sameKey(course.key, key))) return;
-  plan.courses.push({ key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(plan) });
+function addScheduleCourse(plan: SchedulePlan, key: CourseKey, pinnedCRN?: string | null): void {
+  if (!canPlacePlanCourse(plan.courses, key, pinnedCRN)) return;
+  plan.courses.push({
+    key,
+    isRequired: true,
+    excludedCRNs: [],
+    colorIndex: nextColorIndex(plan),
+    ...(pinnedCRN ? { pinnedCRN } : {}),
+  });
+  if (pinnedCRN && !plan.selectedCRNs.includes(pinnedCRN)) plan.selectedCRNs.push(pinnedCRN);
   plan.updatedAt = Date.now();
 }
 
