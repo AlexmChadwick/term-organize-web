@@ -11,8 +11,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { CourseAttributeRepository, type AttributeFetching, type AttributeLookup } from "@/lib/degree/attributes";
-import { countedChecks, runDegreeAudit, satisfiedCount, statusIsSatisfied, totalCount, uncheckedReason, type DegreeAudit, type NoteCheck } from "@/lib/degree/audit";
+import { countedChecks, hoursStatus, runDegreeAudit, satisfiedCount, statusIsSatisfied, totalCount, uncheckedReason, type DegreeAudit, type NoteCheck } from "@/lib/degree/audit";
 import { parseProgramPage, parseUniversitywide, universitywideLink } from "@/lib/degree/catalog-parser";
+import { creditsLine } from "@/lib/degree/substitutions";
 import { NUPATH_REQUIREMENTS, NUpathMatching, type DegreeCourseAttributes, type NUpathCourse, type NUpathRequirement } from "@/lib/degree/nupath";
 import { SeededGenerator, course, emptyPlan, key, term } from "@/lib/degree/swift-fixtures";
 import type { Course, CourseKey, CourseSection, Term } from "@/lib/models";
@@ -309,11 +310,11 @@ describe("DegreeNUpathTests", () => {
     if (!check) throw new Error("universitywide");
     expect(check.items.map((entry) => entry.id)).toEqual(["total-hours", "gpa", "residency"]);
     expect(check.items[0]?.status).toBe("partial");
-    expect(check.items[0]?.detail).toBe("44 of 128 semester hours · 12 planned");
+    expect(check.items[0]?.detail).toBe("32 of 128 semester hours · 12 planned");
     expect(check.items[1]?.status == null && check.items[1]?.detail === "Not checked: plans don’t include grades").toBe(true);
     expect(check.items[2]?.status).toBeNull();
     expect(check.status === "partial" && check.counts).toBe(true);
-    expect(check.detail).toBe("44 of 128 semester hours · 12 planned · GPA and residency not checked");
+    expect(check.detail).toBe("32 of 128 semester hours · 12 planned · GPA and residency not checked");
 
     const unread = runDegreeAudit(nupathPlan(), requirements(), undefined, attributes());
     expect(unread.noteChecks.some((entry) => entry.kind.type === "universitywide")).toBe(false);
@@ -324,7 +325,71 @@ describe("DegreeNUpathTests", () => {
     const check = audit.noteChecks.find((entry) => entry.kind.type === "totalHours");
     if (!check) throw new Error("total hours");
     expect(check.status).toBe("partial");
-    expect(check.detail).toBe("44 of 134 semester hours · 12 planned");
+    expect(check.detail).toBe("32 of 134 semester hours · 12 planned");
+  });
+
+  it("hoursLinesKeepCompletedSeparateFromPlanned", () => {
+    expect(hoursStatus(105, 30, 128)).toEqual({ status: "planned", detail: "105 of 128 semester hours · 30 planned" });
+    expect(hoursStatus(105, 30, 134)).toEqual({ status: "planned", detail: "105 of 134 semester hours · 30 planned" });
+    expect(hoursStatus(60, 22, 72)).toEqual({ status: "planned", detail: "60 of 72 semester hours · 22 planned" });
+    expect(hoursStatus(128, 0, 128)).toEqual({ status: "complete", detail: "128 of 128 semester hours" });
+    expect(hoursStatus(140, 10, 128)).toEqual({ status: "complete", detail: "140 of 128 semester hours · 10 planned" });
+    expect(hoursStatus(90, 20, 128)).toEqual({ status: "partial", detail: "90 of 128 semester hours · 20 planned" });
+    expect(hoursStatus(0, 0, 128)).toEqual({ status: "missing", detail: "0 of 128 semester hours" });
+    expect(hoursStatus(0, 128, 128)).toEqual({ status: "planned", detail: "0 of 128 semester hours · 128 planned" });
+
+    const hoursPage = `
+        <div id="programrequirementstextcontainer" class="tab_content">
+        <h2>Universitywide Requirements</h2>
+        <p>All undergraduate students are required to complete the Universitywide Requirements.</p>
+        <h2>Major Requirements</h2>
+        <table class="sc_courselist"><tbody>
+        <tr class="even firstrow"><td class="codecol"><a class="bubblelink code">CS&#160;3000</a></td><td>Algorithms</td><td class="hourscol">4</td></tr>
+        <tr class="odd"><td colspan="2"><span class="courselistcomment">Complete 8 semester hours of CS classes. Choose courses within the following ranges:</span></td><td class="hourscol">8</td></tr>
+        <tr class="even lastrow"><td colspan="2"><div style="margin-left:20px;" class="blockindent"><span class="courselistcomment commentindent"><a class="bubblelink code">CS&#160;2500</a> or higher</span></div></td><td class="hourscol"></td></tr>
+        </tbody></table>
+        <h2>Writing Requirement</h2>
+        <table class="sc_courselist"><tbody>
+        <tr class="even firstrow lastrow"><td class="codecol"><a class="bubblelink code">ENGW&#160;1111</a></td><td>First-Year Writing</td><td class="hourscol">4</td></tr>
+        </tbody></table>
+        <h2>Required General Electives</h2>
+        <table class="sc_courselist"><tbody>
+        <tr class="even lastrow firstrow"><td colspan="2"><span class="courselistcomment">Complete 4 semester hours of general electives.</span></td><td class="hourscol">4</td></tr>
+        </tbody></table>
+        <h2>Credit Requirement</h2>
+        <p>Complete 72 semester hours in the major.</p>
+        <h2>Program Requirement</h2>
+        <p>134 total semester hours required</p>
+        </div>
+        `;
+    const hoursRequirements = parseProgramPage(hoursPage, year, program);
+    if (!hoursRequirements) throw new Error("hours page");
+    hoursRequirements.universitywide = { totalHours: 128, gpa: 2, residencyHours: 64, requiresExperientialLearning: false, fetchedAt: Date.now() };
+    const plan = emptyPlan("BS CS");
+    plan.completed = [course("CS 3000", 40), course("CS 2500", 20), course("ENGW 1111", 4), course("PHIL 1102", 41)];
+    plan.terms = [term("spring", "spring", 2027, [course("CS 3500", 22), course("MKTG 2201", 8)])];
+    const audit = runDegreeAudit(plan, hoursRequirements);
+    expect(audit.completedHours).toBe(105);
+    expect(audit.plannedHours).toBe(30);
+    expect(audit.requiredHours).toBe(134);
+    expect(creditsLine(audit)).toBe("105 of 134 credits done · 30 planned");
+
+    const university = audit.noteChecks.find((entry) => entry.kind.type === "universitywide");
+    if (!university) throw new Error("universitywide");
+    expect(university.status).toBe("planned");
+    expect(university.items[0]?.status).toBe("planned");
+    expect(university.items[0]?.detail).toBe("105 of 128 semester hours · 30 planned");
+    expect(university.detail).toBe("105 of 128 semester hours · 30 planned · GPA and residency not checked");
+
+    const total = audit.noteChecks.find((entry) => entry.kind.type === "totalHours");
+    if (!total) throw new Error("total hours");
+    expect(total.status).toBe("planned");
+    expect(total.detail).toBe("105 of 134 semester hours · 30 planned");
+
+    const major = audit.noteChecks.find((entry) => entry.kind.type === "majorHours");
+    if (!major) throw new Error("major hours");
+    expect(major.status).toBe("planned");
+    expect(major.detail).toBe("60 of 72 semester hours · 22 planned");
   });
 
   it("saysWhySomeSentencesArentChecked", () => {

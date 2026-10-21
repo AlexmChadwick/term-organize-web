@@ -891,10 +891,8 @@ class AuditEngine {
     }
     const completed = [...counted.values()].filter(courseUseIsCompleted).reduce((sum, use) => sum + Math.max(0, use.credits), 0);
     const planned = [...counted.values()].filter((use) => !courseUseIsCompleted(use)).reduce((sum, use) => sum + Math.max(0, use.credits), 0);
-    const status = hoursStanding(completed, planned, required);
-    let detail = `${creditNumber(completed + planned)} of ${creditNumber(required)} semester hours`;
-    if (planned > 0) detail += `${DOT}${creditNumber(planned)} planned`;
-    return noteItem(sectionID, note, { type: "majorHours", required }, status, detail, "Semester hours in the major");
+    const standing = hoursStatus(completed, planned, required);
+    return noteItem(sectionID, note, { type: "majorHours", required }, standing.status, standing.detail, "Semester hours in the major");
   }
 
   private coopCheck(sectionID: string, note: string): NoteCheck {
@@ -1607,8 +1605,12 @@ function hoursStanding(completed: number, planned: number, required: number): Au
   return "missing";
 }
 
-function hoursStatus(completed: number, planned: number, required: number): { status: AuditStatus; detail: string } {
-  let detail = `${creditNumber(completed + planned)} of ${creditNumber(required)} semester hours`;
+/**
+ * How a semester-hour minimum stands, for the university minimum, the program total, and
+ * hours in the major. The first number is `completed` alone. It is not `completed + planned`.
+ */
+export function hoursStatus(completed: number, planned: number, required: number): { status: AuditStatus; detail: string } {
+  let detail = `${creditNumber(completed)} of ${creditNumber(required)} semester hours`;
   if (planned > 0) detail += `${DOT}${creditNumber(planned)} planned`;
   return { status: hoursStanding(completed, planned, required), detail };
 }

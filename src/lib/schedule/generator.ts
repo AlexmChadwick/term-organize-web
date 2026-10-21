@@ -250,7 +250,11 @@ function roundCreditsUp(value: number | null | undefined): number {
   return Math.ceil(value);
 }
 
-/** One entry per plan course, credits rounded up to whole credits. A pin narrows that entry to its CRN. */
+/**
+ * One entry per plan course, credits rounded up to whole credits.
+ * A pin narrows that entry to its CRN. A pin that is no longer in the catalog
+ * leaves the entry empty so generation stays locked to it and reports it unavailable.
+ */
 export function courseInputsFor(
   planCourses: readonly { key: CourseKey; isRequired: boolean; excludedCRNs?: Iterable<string>; pinnedCRN?: string | null }[],
   index: Pick<ScheduleCatalogLookup, "course" | "sectionsFor"> & {
@@ -410,6 +414,8 @@ export interface CourseReport {
   remainingSections: number;
   rejections: Partial<Record<ScheduleFilterReason, number>>;
   isBlocked: boolean;
+  /** Set when a pinned CRN is not in this term's catalog. The row stays locked to it. */
+  unavailableCRN?: string;
 }
 
 export type ConflictReason = "overlap" | "travelTime";
@@ -849,10 +855,11 @@ function run(
       reports.push({
         key: course.key,
         isRequired: course.isRequired,
-        totalSections: course.sections.length,
+        totalSections: pinned ? course.sections.length : 0,
         remainingSections: pinned ? 1 : 0,
         rejections: {},
         isBlocked: pinned == null,
+        ...(pinned ? {} : { unavailableCRN: course.pinnedCRN }),
       });
       continue;
     }
@@ -1215,6 +1222,8 @@ export class ScheduleBlockerAnalysis {
   requiredCount = 0;
   notOffered: CourseKey[] = [];
   filteredOut: CourseKey[] = [];
+  /** Pinned CRNs that are no longer in the catalog. The row stays locked. */
+  unavailable: { key: CourseKey; crn: string }[] = [];
   options: ScheduleBlockerOption[] = [];
   conflictingPairs: ConflictPair[] = [];
   isIncomplete = false;
@@ -1261,6 +1270,7 @@ export function reviveBlockerAnalysis(raw: ScheduleBlockerAnalysis): ScheduleBlo
   analysis.requiredCount = raw.requiredCount ?? 0;
   analysis.notOffered = raw.notOffered ?? [];
   analysis.filteredOut = raw.filteredOut ?? [];
+  analysis.unavailable = raw.unavailable ?? [];
   analysis.options = raw.options ?? [];
   analysis.conflictingPairs = raw.conflictingPairs ?? [];
   analysis.isIncomplete = !!raw.isIncomplete;
@@ -1296,7 +1306,8 @@ export function analyzeBlockers(
     const report = base.courses[index]!;
     if (!report.isBlocked) continue;
     dead.push(index);
-    if (report.totalSections === 0) analysis.notOffered.push(courses[index]!.key);
+    if (report.unavailableCRN) analysis.unavailable.push({ key: courses[index]!.key, crn: report.unavailableCRN });
+    else if (report.totalSections === 0) analysis.notOffered.push(courses[index]!.key);
     else analysis.filteredOut.push(courses[index]!.key);
   }
   const deadSet = new Set(dead);

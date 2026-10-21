@@ -15,6 +15,7 @@ import type { CourseKey, Requisite } from "@/lib/models";
 import { keyId, parseCourseKey } from "@/lib/models";
 import type { ProgramRequirements } from "@/lib/requirements";
 import { courseInputsFor, generateSchedules } from "@/lib/schedule/generator";
+import { ScheduleNoResultsText } from "@/lib/schedule/no-results";
 import {
   applyCourseMoves,
   applyGeneratedCRNs,
@@ -104,6 +105,27 @@ describe("CRN pins", () => {
     const pinned = generate([{ ...course("CS", "5976", topics), pinnedCRN: "111" }, math]);
     expect(pinned.totalFound).toBe(0);
     expect(pinned.schedules.some((item) => item.crns.includes("333") || item.crns.includes("222"))).toBe(false);
+  });
+
+  it("keeps a missing pinned CRN locked and reports it unavailable", () => {
+    const inputs = courseInputsFor([entry("CS", "5976", "999")], {
+      course: () => null,
+      sectionsFor: () => topics,
+      sectionByCrn: () => null,
+    });
+    expect(inputs[0]!.pinnedCRN).toBe("999");
+    expect(inputs[0]!.sections).toEqual([]);
+    const filters = { freeDays: 0, includeHonors: true, includeOnline: true, hideFullSections: false, minSeats: 0 };
+    const result = generateSchedules(inputs, filters);
+    expect(result.totalFound).toBe(0);
+    expect(result.diagnostics.courses[0]?.unavailableCRN).toBe("999");
+    expect(ScheduleNoResultsText.reasons(result.diagnostics, "Fall 2026").map((reason) => reason.title)).toEqual(["CRN 999 is unavailable"]);
+    expect(ScheduleNoResultsText.reasons(result.diagnostics, "Fall 2026")[0]?.detail).toBe("CS 5976 stays locked to that section.");
+
+    const leaked = generate([{ ...course("CS", "5976", topics), pinnedCRN: "999" }]);
+    expect(leaked.totalFound).toBe(0);
+    expect(leaked.schedules.some((item) => item.crns.some((crn) => crn === "111" || crn === "222" || crn === "333"))).toBe(false);
+    expect(leaked.diagnostics.courses[0]?.unavailableCRN).toBe("999");
   });
 
   it("catalog refresh keeps the pinned CRN when the payload only has other sections", () => {

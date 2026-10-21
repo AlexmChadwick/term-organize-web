@@ -535,7 +535,9 @@ describe("DegreeRequirementsTests", () => {
     expect(satisfiedCount(done)).toBe(totalCount(done));
 
     const short = auditOf(["CS 3000", "CS 3200", "CS 1210"], ["CS 3500"]);
-    expect(short.noteChecks.find((check) => check.kind.type === "majorHours")?.status).toBe("partial");
+    const shortHours = must(short.noteChecks.find((check) => check.kind.type === "majorHours"), "short hours");
+    expect(shortHours.status).toBe("partial");
+    expect(shortHours.detail).toBe("8 of 16 semester hours · 4 planned");
     expect(short.noteChecks.find((check) => check.kind.type === "coop")?.detail).toBe("No co-op in the plan");
     expect(satisfiedCount(short) < totalCount(short)).toBe(true);
   });
