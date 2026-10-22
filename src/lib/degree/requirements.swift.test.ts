@@ -398,7 +398,7 @@ describe("DegreeRequirementsTests", () => {
     const counted = [...ruleResults(audit).flatMap((item) => item.used), ...audit.unused];
     expect(counted.filter((use) => keyId(use.key) === "MKTG 2602").length).toBe(2);
     expect(new Set(counted.map((use) => use.id)).size).toBe(counted.length);
-    expect(duplicateKeys(plan)).toEqual(new Set(["CS 4973", "MKTG 2602"]));
+    expect(duplicateKeys(plan)).toEqual(new Set(["MKTG 2602"]));
   });
 
   it("requiredAlternativesMakeRoom", () => {

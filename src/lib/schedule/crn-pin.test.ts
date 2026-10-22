@@ -208,7 +208,7 @@ describe("CRN pins", () => {
     ];
     repeated.completed = plain;
     expect(termCreditTotal(plain)).toBe(8);
-    expect(duplicateKeys(repeated)).toEqual(new Set(["CS 5976"]));
+    expect(duplicateKeys(repeated)).toEqual(new Set());
     const collapsed = emptyPlan("Collapsed");
     collapsed.completed = [degreeCourse("CS 5976", 4, "Directed Study")];
     collapsed.terms = [term("fall", "fall", 2026, [degreeCourse("CS 5976", 4, "Directed Study")])];

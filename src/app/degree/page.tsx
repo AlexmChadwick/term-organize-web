@@ -5,12 +5,12 @@ import type { CatalogIndex } from "@/lib/catalog-index";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, Select, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
-import { degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
+import { courseUseName, degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide, programURL, programsFromIndex, universitywideLink } from "@/lib/degree/catalog-parser";
 import { courseAttributes } from "@/lib/degree/nupath";
 import { declareEquivalence, planCourseKeys, unorderedPairId, type DegreeEquivalencePrompt } from "@/lib/degree/suggestions";
 import { convertRenumbering, coursesToLookUpForRenumbering, likelyRenumberings, type LikelyRenumbering } from "@/lib/degree/substitutions";
-import { duplicateKeys, duplicateRowWarning, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
+import { courseCopyLabel, duplicateAddNote, duplicateAddPlace, duplicateKeys, duplicatePlanNote, newDegreePlanDraft, planCourseRows, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
 import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
@@ -381,7 +381,7 @@ export default function DegreePage() {
                       <strong>{rule.rule.label.replace(/:$/, "")}</strong>
                       <span className={rule.status === "complete" || rule.status === "waived" ? "text-good" : rule.status === "missing" ? "text-bad" : "text-warn"}>{rule.status}</span>
                     </div>
-                    {rule.used.length ? <p className="text-muted">{rule.used.map((use) => keyId(use.key)).join(", ")}</p> : null}
+                    {rule.used.length ? <p className="text-muted">{rule.used.map((use) => courseUseName(use)).join(", ")}</p> : null}
                   </li>
                 ))}
               </ul>
@@ -450,10 +450,14 @@ function PlanEditor({
   onDismissEquivalence: (prompt: DegreeEquivalencePrompt) => void;
 }) {
   const [draft, setDraft] = useState("CS 3000");
+  const [addNote, setAddNote] = useState<{ id: string; text: string } | null>(null);
   const total = completedCredits(plan) + plannedCredits(plan);
+  const addMessage = addNote && planCourseRows(plan).filter((course) => course.key && keyId(course.key) === addNote.id).length > 1 ? addNote.text : null;
 
   function addCourse(where: "completed" | number) {
     const key = parseCourseKey(draft);
+    const place = key ? duplicateAddPlace(plan, key, where) : null;
+    setAddNote(key && place ? { id: keyId(key), text: duplicateAddNote(place) } : null);
     const course: DegreePlanCourse = {
       id: newId(),
       key,
@@ -480,6 +484,7 @@ function PlanEditor({
       <p className="text-sm">
         {completedCredits(plan)} completed · {plannedCredits(plan)} planned · {total} total credits
       </p>
+      {duplicates.size > 0 ? <p className="text-sm text-muted">{duplicatePlanNote(duplicates.size)}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" type="button" onClick={onExportPDF}>Export PDF</Button>
         <Button variant="ghost" type="button" onClick={onExportText}>Export text</Button>
@@ -502,6 +507,7 @@ function PlanEditor({
           Add semester
         </Button>
       </div>
+      {addMessage ? <p className="text-sm text-muted">{addMessage}</p> : null}
       {prompts.length ? (
         <div className="grid gap-2">
           <h3 className="font-semibold">Course equivalences</h3>
@@ -512,7 +518,7 @@ function PlanEditor({
       ) : null}
       <div>
         <h3 className="font-semibold">Completed</h3>
-        <CourseList courses={plan.completed} duplicates={duplicates} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
+        <CourseList plan={plan} courses={plan.completed} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
       </div>
       {plan.terms.map((term, termIndex) => (
         <div key={term.id} className="rounded-2xl border border-line p-3">
@@ -533,7 +539,7 @@ function PlanEditor({
               Remove semester
             </Button>
           </div>
-          <CourseList courses={term.courses} duplicates={duplicates} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
+          <CourseList plan={plan} courses={term.courses} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
@@ -592,14 +598,14 @@ function planRows(plan: DegreePlan): { id: string; key: CourseKey; label: string
 }
 
 function CourseList({
+  plan,
   courses,
-  duplicates,
   onChange,
   termCode,
   retiredNote,
 }: {
+  plan: DegreePlan;
   courses: DegreePlanCourse[];
-  duplicates: Set<string>;
   onChange: (courses: DegreePlanCourse[]) => void;
   termCode: string;
   retiredNote: (key: CourseKey) => string | null;
@@ -611,7 +617,7 @@ function CourseList({
         <li key={course.id} className="flex flex-wrap items-center gap-2 text-sm">
           {course.key ? (
             <Link className="font-semibold underline" href={courseHref(termCode, course.key)}>
-              {course.label}
+              {courseCopyLabel(plan, course)}
             </Link>
           ) : (
             <span className="font-semibold">{course.label}</span>
@@ -622,7 +628,6 @@ function CourseList({
           <button type="button" className="text-muted" onClick={() => onChange(courses.filter((item) => item.id !== course.id))}>
             Remove
           </button>
-          {course.key && duplicates.has(keyId(course.key)) ? <p className="basis-full text-muted">{duplicateRowWarning(keyId(course.key))}</p> : null}
         </li>
       ))}
     </ul>

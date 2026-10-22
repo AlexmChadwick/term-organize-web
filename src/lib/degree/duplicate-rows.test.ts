@@ -1,46 +1,95 @@
 /**
- * A repeated course number stays in the degree plan. Each row is warned, counted,
- * substituted, and synced on its own.
+ * A repeated course number stays in the degree plan. Warned copies still count,
+ * each row is numbered, substituted, and synced on its own.
  */
 
 import { describe, expect, it } from "vitest";
-import { resultFor, runDegreeAudit } from "@/lib/degree/audit";
+import { courseUseName, resultFor, ruleResults, runDegreeAudit, type DegreeAudit } from "@/lib/degree/audit";
 import { scheduleForDegreePlan } from "@/lib/degree/plan-edit";
 import { applyReorderSuggestion } from "@/lib/degree/reordering";
 import { course, emptyPlan, requirements, substitution, term } from "@/lib/degree/swift-fixtures";
-import { duplicateKeys, duplicateRowWarning, newDegreePlanDraft } from "@/lib/degree-logic";
-import { keyId } from "@/lib/models";
+import { courseCopyLabel, duplicateAddNote, duplicateAddPlace, duplicateKeys, duplicatePlanNote, newDegreePlanDraft } from "@/lib/degree-logic";
+import { keyId, type CourseKey } from "@/lib/models";
 import { allRules } from "@/lib/requirements";
 import type { SchedulePlan } from "@/lib/user";
 
-const warning = "CS 4973 is in your plan more than once. That's fine for special topics; otherwise remove the extra copy.";
+const seminarKey: CourseKey = { subject: "CS", number: "4973" };
+
+function copyNames(audit: DegreeAudit, code: string): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const use of [...ruleResults(audit).flatMap((rule) => rule.used), ...audit.unused]) {
+    if (seen.has(use.id) || keyId(use.key) !== code) continue;
+    seen.add(use.id);
+    names.push(courseUseName(use));
+  }
+  return names.sort();
+}
 
 describe("degree plan duplicate rows", () => {
   it("adds two CS 4973 rows with no CRN, warns, and counts both", () => {
     const req = requirements();
     const electives = allRules(req).find((rule) => rule.label.startsWith("Complete 8 semester hours of CS"));
     const plan = emptyPlan("Topics");
-    const first = course("CS 4973", 4, "Directed Study");
-    const second = course("CS 4973", 4, "Directed Study");
+    const first = course("CS 4973", 4, "Seminar");
+    const second = course("CS 4973", 4, "Seminar");
     plan.terms = [term("fall", "fall", 2026, [first, second])];
 
-    expect(duplicateRowWarning("CS 4973")).toBe(warning);
     expect(duplicateKeys(plan)).toEqual(new Set(["CS 4973"]));
+    expect(duplicatePlanNote(1)).toBe("1 course appears more than once in this plan. Each copy still counts.");
+    expect(duplicatePlanNote(2)).toBe("2 courses appear more than once in this plan. Each copy still counts.");
+    expect(courseCopyLabel(plan, first)).toBe("CS 4973");
+    expect(courseCopyLabel(plan, second)).toBe("CS 4973 (2)");
+    expect(duplicateAddPlace(plan, seminarKey, 0)).toBe("Fall 2026");
+    expect(duplicateAddNote("Fall 2026")).toBe("Already in Fall 2026. Adding it again keeps both copies.");
     expect(first.crn ?? null).toBeNull();
     expect(second.crn ?? null).toBeNull();
 
     const completedPair = emptyPlan("Completed");
-    completedPair.completed = [course("CS 4973", 4, "Directed Study"), course("CS 4973", 4, "Directed Study")];
+    completedPair.completed = [course("CS 4973", 4, "Seminar"), course("CS 4973", 4, "Seminar")];
     expect(duplicateKeys(completedPair)).toEqual(new Set(["CS 4973"]));
+    expect(duplicateAddPlace(completedPair, seminarKey, "completed")).toBe("completed courses");
+    expect(runDegreeAudit(completedPair, req).completedHours).toBe(8);
 
     const mixed = emptyPlan("Mixed");
-    mixed.completed = [course("CS 4973", 4, "Directed Study")];
-    mixed.terms = [term("spring", "spring", 2027, [course("CS 4973", 4, "Directed Study")])];
+    mixed.completed = [course("CS 4973", 4, "Seminar")];
+    mixed.terms = [term("spring", "spring", 2027, [course("CS 4973", 4, "Seminar")])];
     expect(duplicateKeys(mixed)).toEqual(new Set(["CS 4973"]));
+    expect(duplicateAddPlace(mixed, seminarKey, 0)).toBe("Spring 2027");
 
     const audit = runDegreeAudit(plan, req);
     expect(audit.plannedHours).toBe(8);
+    expect(copyNames(audit, "CS 4973")).toEqual(["CS 4973", "CS 4973 (2)"]);
     expect(resultFor(audit, electives!.id)?.used.map((use) => use.id).sort()).toEqual([first.id, second.id].sort());
+  });
+
+  it("warns for the same CRN, and not for different CRNs or a topic title", () => {
+    const req = requirements();
+    const sameCrn = emptyPlan("Same CRN");
+    sameCrn.completed = [
+      { ...course("CS 4973", 4, "Seminar"), crn: "10001" },
+      { ...course("CS 4973", 4, "Seminar"), crn: "10001" },
+    ];
+    expect(duplicateKeys(sameCrn)).toEqual(new Set(["CS 4973"]));
+    expect(runDegreeAudit(sameCrn, req).completedHours).toBe(8);
+    expect(copyNames(runDegreeAudit(sameCrn, req), "CS 4973")).toEqual(["CS 4973", "CS 4973 (2)"]);
+
+    const differentCrn = emptyPlan("Different CRNs");
+    const pinned = [
+      { ...course("CS 4973", 4, "Seminar"), crn: "10001" },
+      { ...course("CS 4973", 4, "Seminar"), crn: "10002" },
+    ];
+    differentCrn.terms = [term("fall", "fall", 2026, pinned)];
+    expect(duplicateKeys(differentCrn)).toEqual(new Set());
+    expect(runDegreeAudit(differentCrn, req).plannedHours).toBe(8);
+    expect(copyNames(runDegreeAudit(differentCrn, req), "CS 4973")).toEqual(["CS 4973", "CS 4973 (2)"]);
+    expect(courseCopyLabel(differentCrn, pinned[1]!)).toBe("CS 4973 (2)");
+
+    const topical = emptyPlan("Topic title");
+    topical.terms = [term("fall", "fall", 2026, [course("CS 4973", 4, "Special Topics"), course("CS 4973", 4, "Special Topics")])];
+    expect(duplicateKeys(topical)).toEqual(new Set());
+    expect(runDegreeAudit(topical, req).plannedHours).toBe(8);
+    expect(copyNames(runDegreeAudit(topical, req), "CS 4973")).toEqual(["CS 4973", "CS 4973 (2)"]);
   });
 
   it("substitutes each row on its own and keeps the other when one row is removed", () => {

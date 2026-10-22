@@ -12,7 +12,7 @@ import { CourseEquivalences } from "./equivalences";
 import type { CourseKey, Requisite, Term } from "./models";
 import { compareCourseKeys, courseKeyOf, creditsLabel, keyId, referencedCourses, sameKey, termCalendarYear, termSeason } from "./models";
 import type { DegreePlan, DegreePlanCourse, DegreePlanTerm, PlanSeason } from "./requirements";
-import { seasonStartMonth, termSortKey } from "./requirements";
+import { PLAN_SEASON_SHORT, seasonStartMonth, termSortKey } from "./requirements";
 import type { SchedulePlan } from "./user";
 import { newId } from "./user";
 
@@ -188,20 +188,63 @@ export function statusOf(requisite: Requisite | null | undefined, taken: Set<str
   return missing ? { kind: "missing", text: missing } : { kind: "met" };
 }
 
-/** Course numbers that appear more than once, across completed and planned rows. */
-export function duplicateKeys(plan: DegreePlan): Set<string> {
-  const counts = new Map<string, number>();
-  for (const course of [...plan.completed, ...plan.terms.flatMap((term) => term.courses)]) {
-    if (!course.key) continue;
-    const id = keyId(course.key);
-    counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
-  return new Set([...counts].filter(([, count]) => count > 1).map(([id]) => id));
+/** Completed rows, then each semester, in plan order. */
+export function planCourseRows(plan: DegreePlan): DegreePlanCourse[] {
+  return [...plan.completed, ...plan.terms.flatMap((term) => term.courses)];
 }
 
-/** Shown on every row whose course number appears again. It does not block the plan. */
-export function duplicateRowWarning(label: string): string {
-  return `${label} is in your plan more than once. That's fine for special topics; otherwise remove the extra copy.`;
+/**
+ * Course numbers that do not count separately.
+ * A pair warns when it has no CRN, or the same CRN, and neither title contains “topic”.
+ * Different manual CRNs, or a title containing “topic”, do not warn. Every row still counts.
+ */
+export function duplicateKeys(plan: DegreePlan): Set<string> {
+  const rows = planCourseRows(plan).filter((course): course is DegreePlanCourse & { key: CourseKey } => course.key != null);
+  const warned = new Set<string>();
+  for (let index = 0; index < rows.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      const left = rows[index]!;
+      const right = rows[earlier]!;
+      if (!sameKey(left.key, right.key) || entriesCountSeparately(left, right)) continue;
+      warned.add(keyId(left.key));
+    }
+  }
+  return warned;
+}
+
+/** First copy keeps the course code. Later copies are “CS 4973 (2)”, including warned ones. */
+export function courseCopyLabel(plan: DegreePlan, course: DegreePlanCourse): string {
+  if (!course.key) return course.label;
+  const id = keyId(course.key);
+  const copies = planCourseRows(plan).filter((item) => item.key && sameKey(item.key, course.key!));
+  const index = copies.findIndex((item) => item.id === course.id);
+  return index > 0 ? `${id} (${index + 1})` : id;
+}
+
+/** Plan header. `count` is the number of course numbers that appear more than once. */
+export function duplicatePlanNote(count: number): string {
+  const courses = count === 1 ? "course appears" : "courses appear";
+  return `${count} ${courses} more than once in this plan. Each copy still counts.`;
+}
+
+/** Shown when a course number is added somewhere it already exists. */
+export function duplicateAddNote(term: string): string {
+  return `Already in ${term}. Adding it again keeps both copies.`;
+}
+
+/** Where this course number already sits, preferring the list the new row is joining. */
+export function duplicateAddPlace(plan: DegreePlan, key: CourseKey, where: "completed" | number): string | null {
+  const named = (term: DegreePlanTerm) => `${PLAN_SEASON_SHORT[term.season]} ${term.year}`;
+  const holds = (courses: DegreePlanCourse[]) => courses.some((course) => course.key && sameKey(course.key, key));
+  if (typeof where === "number") {
+    const term = plan.terms[where];
+    if (term && holds(term.courses)) return named(term);
+  } else if (holds(plan.completed)) {
+    return "completed courses";
+  }
+  if (holds(plan.completed)) return "completed courses";
+  for (const term of plan.terms) if (holds(term.courses)) return named(term);
+  return null;
 }
 
 export function planTermMatches(term: DegreePlanTerm, banner: Term): boolean {
