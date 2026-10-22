@@ -14,6 +14,7 @@
 import { decodeEntities, plainText, tableRows } from "./html";
 import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Instructor, Meeting, Requisite, Subject, Term, TermCatalog } from "./models";
 import { HONORS_ATTRIBUTE, compareCourseKeys, keyId, minutesFromHHMM, recomputePostreqs, reqAnd, reqCourse, simplifyRequisite } from "./models";
+import { bannerCreditBounds } from "./variable-credits";
 
 export interface SubjectLookup {
   code(name: string): string;
@@ -281,6 +282,8 @@ export interface BannerSection {
   crossListAvailable?: number | null;
   creditHourHigh?: number | null;
   creditHourLow?: number | null;
+  /** "TO" when the section has a credit range. The range itself is low and high. */
+  creditHourIndicator?: string | null;
   meetingsFaculty?: {
     faculty?: { displayName?: string | null; emailAddress?: string | null; primaryIndicator?: boolean | null }[] | null;
     meetingTime?: BannerMeeting | null;
@@ -384,6 +387,7 @@ export function sectionsFromBanner(banner: BannerSection[], previous: Map<string
       .map(facultyToInstructor)
       .filter((i): i is Instructor => i != null);
     const prior = previous.get(s.courseReferenceNumber);
+    const credits = bannerCreditBounds(s);
     const group = blank(s.crossList);
     const crossList = (group ? crossLists.get(group) ?? [] : []).filter((crn) => crn !== s.courseReferenceNumber);
     return {
@@ -410,6 +414,10 @@ export function sectionsFromBanner(banner: BannerSection[], previous: Map<string
       description: prior?.description ?? null,
       prereqs: prior?.prereqs ?? null,
       coreqs: prior?.coreqs ?? null,
+      creditLow: credits.low,
+      creditHigh: credits.high,
+      creditHours: credits.creditHours,
+      restrictions: prior?.restrictions,
     };
   });
 }
@@ -430,21 +438,25 @@ export function stubCourses(banner: BannerSection[]): { courses: Course[]; attri
     if (existing) {
       const codes = new Set([...existing.attributes, ...sectionAttributes.map((a) => a.code).filter((c) => c !== HONORS_ATTRIBUTE)]);
       existing.attributes = [...codes].sort();
+      const credits = bannerCreditBounds(s);
+      existing.minCredits = Math.min(existing.minCredits, credits.low);
+      existing.maxCredits = Math.max(existing.maxCredits, credits.high);
+      if (existing.defaultCredits == null && credits.creditHours != null) existing.defaultCredits = credits.creditHours;
       if (!existing.specialTopics && isTopics) {
         existing.specialTopics = true;
         existing.title = "Special Topics";
       }
     } else {
       const special = title.toLowerCase().includes("special topics") || isTopics;
-      const low = s.creditHourLow ?? s.creditHours ?? 0;
-      const high = s.creditHourHigh ?? low;
+      const credits = bannerCreditBounds(s);
       courses.set(key, {
         subject: s.subject,
         number: s.courseNumber,
         title: special ? "Special Topics" : title,
         description: "",
-        minCredits: low,
-        maxCredits: high,
+        minCredits: credits.low,
+        maxCredits: credits.high,
+        defaultCredits: credits.creditHours,
         attributes: sectionAttributes.map((a) => a.code).filter((c) => c !== HONORS_ATTRIBUTE).sort(),
         postreqs: [],
         specialTopics: special,
@@ -489,6 +501,7 @@ export function mergeCatalog(options: {
         ...known,
         minCredits: stub.minCredits,
         maxCredits: stub.maxCredits,
+        defaultCredits: stub.defaultCredits ?? known.defaultCredits,
         attributes: stub.attributes,
         specialTopics: known.specialTopics || stub.specialTopics,
       };
@@ -499,6 +512,7 @@ export function mergeCatalog(options: {
         ...borrowed,
         minCredits: stub.minCredits,
         maxCredits: stub.maxCredits,
+        defaultCredits: stub.defaultCredits ?? borrowed.defaultCredits,
         attributes: stub.attributes,
         specialTopics: borrowed.specialTopics || stub.specialTopics,
         postreqs: [],

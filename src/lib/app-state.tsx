@@ -1,5 +1,6 @@
 "use client";
 
+import { refreshCreditsFromCatalog } from "@/lib/credit-sync";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
 import type { Course, CourseKey, CourseSection, Term, TermCatalog } from "@/lib/models";
@@ -227,6 +228,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [termCode, ready]);
+
+  useEffect(() => {
+    if (!ready || !index || index.catalog.term.code !== termCode) return;
+    setUser((prev) => {
+      const next = refreshCreditsFromCatalog(prev, termCode, (key) => index.course(key));
+      return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+    });
+  }, [ready, index, termCode, setUser]);
 
   useEffect(() => {
     let cancelled = false;

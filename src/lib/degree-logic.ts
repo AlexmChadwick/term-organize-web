@@ -388,7 +388,12 @@ export function scheduleSuggestions(options: {
   return [...exact, ...copies, ...closest];
 }
 
-export function newDegreePlanDraft(name: string, source: DegreePlan | null, schedulePlans: SchedulePlan[], courseLookup: (term: string, key: CourseKey) => { title: string; credits: number } | null): DegreePlan {
+export function newDegreePlanDraft(
+  name: string,
+  source: DegreePlan | null,
+  schedulePlans: SchedulePlan[],
+  courseLookup: (term: string, key: CourseKey) => { title: string; credits: number; creditLow?: number | null; creditHigh?: number | null } | null,
+): DegreePlan {
   const now = Date.now();
   const draft: DegreePlan = {
     id: newId(),
@@ -439,12 +444,15 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
         continue;
       }
       const course = courseLookup(plan.termCode, planCourse.key);
+      const creditLow = planCourse.creditLow ?? course?.creditLow;
+      const creditHigh = planCourse.creditHigh ?? course?.creditHigh;
       draft.terms[termPosition]!.courses.push({
         id: newId(),
         key: planCourse.key,
         label: keyId(planCourse.key),
         title: (course?.title ?? keyId(planCourse.key)).slice(0, 30),
-        credits: course?.credits ?? 4,
+        credits: planCourse.credits ?? course?.credits ?? 4,
+        ...(creditLow != null && creditHigh != null && creditLow !== creditHigh ? { creditLow, creditHigh } : {}),
         ...(pin ? { crn: pin } : {}),
       });
     }

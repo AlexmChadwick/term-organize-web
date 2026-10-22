@@ -124,6 +124,31 @@ describe("SearchEngineTests", () => {
     const found = searchCatalog(tiny, "", filters, "courseNumber").results.map((result) => result.course.number);
     expect(found).toEqual(["1101"]);
   });
+
+  it("levelBandSplitsAt5000AndCombinesWithRequisiteFilters", () => {
+    const under = listed({ subject: "CS", number: "4999", title: "Undergrad edge" });
+    const grad = listed({ subject: "CS", number: "5000", title: "Grad edge" });
+    const underNeeds = listed({ subject: "CS", number: "2500", title: "Fundies", prereqs: reqCourse({ subject: "CS", number: "1800" }) });
+    const gradOpen = listed({ subject: "CS", number: "5100", title: "Open grad" });
+    expect(courseMatchesFilters(under, { ...emptySearchFilters(), levelBand: "undergrad" })).toBe(true);
+    expect(courseMatchesFilters(under, { ...emptySearchFilters(), levelBand: "grad" })).toBe(false);
+    expect(courseMatchesFilters(grad, { ...emptySearchFilters(), levelBand: "grad" })).toBe(true);
+    expect(courseMatchesFilters(grad, { ...emptySearchFilters(), levelBand: "undergrad" })).toBe(false);
+    expect(courseMatchesFilters(grad, emptySearchFilters())).toBe(true);
+    expect(searchFilterCount({ ...emptySearchFilters(), levelBand: "grad" })).toBe(1);
+    expect(searchFilterCount(emptySearchFilters())).toBe(0);
+
+    const combined = { ...emptySearchFilters(), levelBand: "undergrad" as const, noPrerequisites: true, noCorequisites: true };
+    expect(searchFilterCount(combined)).toBe(3);
+    expect(courseMatchesFilters(under, combined)).toBe(true);
+    expect(courseMatchesFilters(underNeeds, combined)).toBe(false);
+    expect(courseMatchesFilters(gradOpen, combined)).toBe(false);
+    const tiny = CatalogIndex.build(tinyCatalog([under, grad, underNeeds, gradOpen]));
+    const numbers = searchCatalog(tiny, "", combined, "courseNumber").results.map((result) => result.course.number);
+    expect(numbers).toEqual(["4999"]);
+    const gradOnly = searchCatalog(tiny, "cs", { ...emptySearchFilters(), levelBand: "grad" }, "courseNumber").results.map((result) => result.course.number);
+    expect(gradOnly).toEqual(["5000", "5100"]);
+  });
 });
 
 function listed(partial: Partial<Course> & Pick<Course, "subject" | "number" | "title">): Course {

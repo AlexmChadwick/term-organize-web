@@ -1,12 +1,14 @@
 "use client";
 
 import { courseHref, NuChips, SeatText } from "@/components/bits";
+import { useRovingRows } from "@/components/roving-selection";
 import { Button, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { availabilityLabel } from "@/lib/catalog-index";
-import type { SearchFilters, SearchSort } from "@/lib/models";
+import type { CourseSection, LevelBand, SearchFilters, SearchSort } from "@/lib/models";
 import { DAY_SHORT, NU_PATHS, creditsLabel, emptySearchFilters, instructorDisplayName, keyId, searchFilterCount } from "@/lib/models";
-import { searchCatalog } from "@/lib/search";
+import { courseCpsNote } from "@/lib/restrictions";
+import { searchCatalog, type SearchResult } from "@/lib/search";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
@@ -14,7 +16,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 function SearchScreen() {
   const params = useSearchParams();
   const router = useRouter();
-  const { index, catalogStatus, catalogDetail, catalogError, rememberSearch, user, termCode } = useApp();
+  const { index, catalogStatus, catalogDetail, catalogError, rememberSearch, user, updateUser, termCode } = useApp();
   const initial = params.get("q") ?? "";
   const [text, setText] = useState(initial);
   const [filters, setFilters] = useState<SearchFilters>(emptySearchFilters());
@@ -22,6 +24,12 @@ function SearchScreen() {
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => setText(initial), [initial]);
+
+  useEffect(() => {
+    const band = user.preferences.searchLevel;
+    if (!band) return;
+    setFilters((current) => (current.levelBand === band ? current : { ...current, levelBand: band }));
+  }, [user.preferences.searchLevel]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -45,6 +53,13 @@ function SearchScreen() {
   }, [index, text, filters, sort]);
 
   const shown = response?.results.slice(0, 80) ?? [];
+  const rows = useRovingRows(shown.length);
+  const selectedCourse = rows.selected != null ? shown[rows.selected] : null;
+
+  function chooseLevel(band: LevelBand) {
+    setFilters((current) => ({ ...current, levelBand: band }));
+    updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, searchLevel: band } }));
+  }
 
   return (
     <div className="grid gap-4">
@@ -69,6 +84,27 @@ function SearchScreen() {
 
       {showFilters && index ? (
         <div className="card grid gap-4 p-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <div className="label">Undergrad or grad</div>
+            <div role="radiogroup" aria-label="Undergrad or grad" className="mt-1 inline-flex rounded-full border border-line p-0.5">
+              {(["all", "undergrad", "grad"] as const).map((band) => {
+                const on = (filters.levelBand ?? "all") === band;
+                const label = band === "all" ? "All" : band === "undergrad" ? "Undergrad" : "Grad";
+                return (
+                  <button
+                    key={band}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`rounded-full px-3 py-1 text-sm ${on ? "bg-accent text-white" : "text-muted"}`}
+                    onClick={() => chooseLevel(band)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <label className="label">
             Subject
             <select
@@ -198,7 +234,15 @@ function SearchScreen() {
               <input className="field" inputMode="decimal" value={filters.maxCredits ?? ""} onChange={(event) => setFilters({ ...filters, maxCredits: event.target.value ? Number(event.target.value) : null })} />
             </label>
           </div>
-          <Button className="justify-self-start md:col-span-2" variant="ghost" type="button" onClick={() => setFilters(emptySearchFilters())}>
+          <Button
+            className="justify-self-start md:col-span-2"
+            variant="ghost"
+            type="button"
+            onClick={() => {
+              setFilters(emptySearchFilters());
+              updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, searchLevel: "all" } }));
+            }}
+          >
             Clear filters
           </Button>
         </div>
@@ -251,30 +295,86 @@ function SearchScreen() {
         </p>
       ) : null}
 
-      <ul className="grid gap-2">
-        {shown.map((result) => {
-          const key = { subject: result.course.subject, number: result.course.number };
-          return (
-            <li key={result.id}>
-              <Link href={courseHref(termCode, key)} className="card block p-4 hover:border-accent">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div className="font-semibold">
-                    {keyId(key)} <span className="font-normal text-muted">{result.course.title}</span>
+      {shown.length ? (
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div role="listbox" aria-label="Search results" className="grid gap-2">
+            {shown.map((result, rowIndex) => {
+              const key = { subject: result.course.subject, number: result.course.number };
+              const note = index ? courseCpsNote(index.sectionsOf(key)) : null;
+              const picked = rows.selected === rowIndex;
+              return (
+                <div
+                  key={result.id}
+                  role="option"
+                  aria-selected={picked}
+                  tabIndex={rows.tabIndex(rowIndex)}
+                  ref={(node) => {
+                    rows.itemRefs.current[rowIndex] = node;
+                  }}
+                  className={`card block w-full cursor-pointer p-4 text-left hover:border-accent ${picked ? "border-accent" : ""}`}
+                  onClick={() => rows.select(rowIndex)}
+                  onKeyDown={(event) => rows.move(event, rowIndex)}
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="font-semibold">
+                      <Link className="underline" href={courseHref(termCode, key)}>
+                        {keyId(key)}
+                      </Link>{" "}
+                      <span className="font-normal text-muted">{result.course.title}</span>
+                    </div>
+                    <div className="text-sm">{creditsLabel(result.course.minCredits, result.course.maxCredits)}</div>
                   </div>
-                  <div className="text-sm">{creditsLabel(result.course.minCredits, result.course.maxCredits)}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+                    <span>{availabilityLabel(result.stats)}</span>
+                    <SeatText remaining={result.stats.seatsRemaining} capacity={result.stats.seatCapacity} />
+                    <NuChips attributes={result.course.attributes} />
+                  </div>
+                  {note ? <p className="mt-2 text-xs text-muted">{note}</p> : null}
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-                  <span>{availabilityLabel(result.stats)}</span>
-                  <SeatText remaining={result.stats.seatsRemaining} capacity={result.stats.seatCapacity} />
-                  <NuChips attributes={result.course.attributes} />
-                </div>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+              );
+            })}
+          </div>
+          <CourseDetails
+            result={selectedCourse}
+            termCode={termCode}
+            sections={selectedCourse && index ? index.sectionsOf({ subject: selectedCourse.course.subject, number: selectedCourse.course.number }) : []}
+          />
+        </div>
+      ) : null}
       {response && response.results.length === 0 ? <p className="state text-muted">Nothing matched. Check the subject code or loosen a filter.</p> : null}
     </div>
+  );
+}
+
+function CourseDetails({
+  result,
+  termCode,
+  sections,
+}: {
+  result: SearchResult | null;
+  termCode: string;
+  sections: CourseSection[];
+}) {
+  if (!result) {
+    return (
+      <aside className="card p-4 text-sm text-muted" aria-label="Course details">
+        Select a course.
+      </aside>
+    );
+  }
+  const key = { subject: result.course.subject, number: result.course.number };
+  const note = courseCpsNote(sections);
+  return (
+    <aside className="card grid gap-2 p-4" aria-label="Course details">
+      <p className="text-sm font-semibold text-accent">{keyId(key)}</p>
+      <h2 className="font-semibold">{result.course.title}</h2>
+      <p className="text-sm text-muted">{creditsLabel(result.course.minCredits, result.course.maxCredits)}</p>
+      {note ? <p className="text-xs text-muted">{note}</p> : null}
+      {result.course.description ? <p className="line-clamp-6 text-sm leading-relaxed">{result.course.description}</p> : null}
+      <Link className="text-sm underline" href={courseHref(termCode, key)}>
+        Open course
+      </Link>
+    </aside>
   );
 }
 

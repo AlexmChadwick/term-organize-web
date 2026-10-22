@@ -1,6 +1,10 @@
 "use client";
 
 import { WeekCalendar, blocksFromSections, courseHref, type CalendarBlock } from "@/components/bits";
+import { CreditStepper } from "@/components/credit-stepper";
+import { setScheduleRowCredits } from "@/lib/credit-sync";
+import { courseCpsNote } from "@/lib/restrictions";
+import { defaultChosenCredits, isVariableCredit, rowIsVariable } from "@/lib/variable-credits";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, TextArea, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
@@ -8,7 +12,7 @@ import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
 import { sectionsToICS, downloadText } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
-import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
+import { DAY_SHORT, courseColorAt, courseColorIndex, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
 import { blockedTimeIsValid, emptyPreferences, schedulePreferencesContext, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
 import { ScheduleSurveyExtras } from "@/components/schedule-survey";
@@ -83,7 +87,16 @@ export default function SchedulePage() {
 
   function add(key: CourseKey, pinnedCRN?: string | null) {
     const target = current();
-    updatePlan(target.id, (item) => placePlanCourse(item, key, pinnedCRN));
+    const listed = index?.course(key);
+    const chosen =
+      listed && isVariableCredit(listed.minCredits, listed.maxCredits)
+        ? {
+            credits: defaultChosenCredits({ low: listed.minCredits, high: listed.maxCredits, creditHours: listed.defaultCredits }),
+            creditLow: listed.minCredits,
+            creditHigh: listed.maxCredits,
+          }
+        : undefined;
+    updatePlan(target.id, (item) => placePlanCourse(item, key, pinnedCRN, chosen));
     setQuery("");
   }
 
@@ -280,6 +293,15 @@ export default function SchedulePage() {
                       </button>
                     </div>
                     <p className="text-sm text-muted">{listed?.title}</p>
+                    {courseCpsNote(sections) ? <p className="text-xs text-muted">{courseCpsNote(sections)}</p> : null}
+                    {rowIsVariable(course) ? (
+                      <CreditStepper
+                        credits={course.credits ?? course.creditLow!}
+                        low={course.creditLow!}
+                        high={course.creditHigh!}
+                        onChange={(value) => updateUser((prev) => setScheduleRowCredits(prev, active!.id, courseIndex, value))}
+                      />
+                    ) : null}
                     <label className="mt-1 flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -306,7 +328,6 @@ export default function SchedulePage() {
                         ))}
                       </select>
                     </label>
-                    {listed ? <p className="mt-1 text-xs text-muted">{creditsLabel(listed.minCredits, listed.maxCredits)}</p> : null}
                   </li>
                 );
               })}

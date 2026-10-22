@@ -11,6 +11,7 @@
 import { bannerCodeForSeason } from "@/lib/degree-format";
 import { creditNumber, keyId, termApproximateWindow, type CourseKey } from "@/lib/models";
 import { PLAN_SEASON_EXPORT, termCredits, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm } from "@/lib/requirements";
+import { pushCreditsToSchedule } from "@/lib/variable-credits";
 import { emptyPlanFilters, newId, nextColorIndex, type SchedulePlan } from "@/lib/user";
 
 /** Appends a course to a semester. No-op when that semester is gone. */
@@ -77,17 +78,20 @@ export interface SemesterSchedule {
  * when it creates a schedule, the way `UserDataStore.scheduleForDegreePlan` does.
  */
 export function scheduleForDegreePlan(plans: SchedulePlan[], semester: DegreePlanTerm, termCode: string): SemesterSchedule | null {
-  const entries: { key: CourseKey; crn: string | null }[] = [];
+  const entries: { key: CourseKey; crn: string | null; credits: number; creditLow?: number | null; creditHigh?: number | null }[] = [];
   for (const course of semester.courses) {
     if (!course.key) continue;
-    entries.push({ key: course.key, crn: course.crn ?? null });
+    entries.push({ key: course.key, crn: course.crn ?? null, credits: course.credits, creditLow: course.creditLow, creditHigh: course.creditHigh });
   }
   if (entries.length === 0) return null;
   const wanted = entries.map((entry) => (entry.crn ? `${keyId(entry.key)}#${entry.crn}` : keyId(entry.key))).sort();
   const existing = plansInTerm(plans, termCode).find((plan) => sameCourseMultiset(plan, wanted));
-  if (existing) return { plan: existing, isNew: false, courseCount: entries.length };
+  if (existing) {
+    existing.courses = pushCreditsToSchedule(semester.courses, existing.courses);
+    return { plan: existing, isNew: false, courseCount: entries.length };
+  }
   const schedule = createSchedulePlan(plans, scheduleName(semester, plansInTerm(plans, termCode).map((plan) => plan.name)), termCode);
-  for (const entry of entries) addScheduleCourse(schedule, entry.key, entry.crn);
+  for (const entry of entries) addScheduleCourse(schedule, entry.key, entry.crn, entry);
   return { plan: schedule, isNew: true, courseCount: entries.length };
 }
 
@@ -122,13 +126,19 @@ function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: strin
 }
 
 /** Copies one degree-plan row. A repeated course number stays a second row, and a missing CRN stays missing. */
-function addScheduleCourse(plan: SchedulePlan, key: CourseKey, pinnedCRN?: string | null): void {
+function addScheduleCourse(
+  plan: SchedulePlan,
+  key: CourseKey,
+  pinnedCRN?: string | null,
+  chosen?: { credits: number; creditLow?: number | null; creditHigh?: number | null },
+): void {
   plan.courses.push({
     key,
     isRequired: true,
     excludedCRNs: [],
     colorIndex: nextColorIndex(plan),
     ...(pinnedCRN ? { pinnedCRN } : {}),
+    ...(chosen ? { credits: chosen.credits, creditLow: chosen.creditLow, creditHigh: chosen.creditHigh } : {}),
   });
   if (pinnedCRN && !plan.selectedCRNs.includes(pinnedCRN)) plan.selectedCRNs.push(pinnedCRN);
   plan.updatedAt = Date.now();

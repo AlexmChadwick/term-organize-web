@@ -1,12 +1,14 @@
 "use client";
 
 import { NuChips, RequisiteTree, SeatText, courseHref, meetingLabel, sectionHref } from "@/components/bits";
+import { useRovingRows } from "@/components/roving-selection";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { courseInfoCreditsLabel } from "@/lib/degree-logic";
 import type { Course, CourseKey, CourseSection } from "@/lib/models";
 import { courseKeyOf, creditsLabel, instructorLabel, keyId, nupathsFromAttributes, offeringTermLabel, referencedCourses, requisiteSummary, scheduleSummary, seatsLabel } from "@/lib/models";
 import { retryCourseFacts, useCourseFacts, type CatalogEntry } from "@/lib/plan-course-info";
+import { courseCpsNote, sectionCpsNote } from "@/lib/restrictions";
 import { sortedSections as sortSections, type CatalogIndex } from "@/lib/catalog-index";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -110,6 +112,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
           <div className="mt-2">
             <NuChips attributes={course.attributes ?? []} />
           </div>
+          {courseCpsNote(sections) ? <p className="mt-2 text-sm text-muted">{courseCpsNote(sections)}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={() => addCourseToPlan(key)}>Add to schedule</Button>
@@ -176,33 +179,81 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
       <section>
         <h2 className="mb-2 font-semibold">Sections</h2>
         {sections.length === 0 ? <p className="text-muted">No sections for this term.</p> : null}
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>CRN</th>
-                <th>Section</th>
-                <th>When</th>
-                <th>Instructor</th>
-                <th>Seats</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sections.map((section) => (
-                <tr key={section.crn}>
-                  <td>
+        {sections.length ? (
+          <SectionsGrid
+            term={term}
+            sections={sections}
+            isWatched={isWatched}
+            onWatch={(section) => (isWatched(section.crn) ? unwatch(section.crn) : watchSection(section))}
+          />
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function SectionsGrid({
+  term,
+  sections,
+  isWatched,
+  onWatch,
+}: {
+  term: string;
+  sections: CourseSection[];
+  isWatched: (crn: string) => boolean;
+  onWatch: (section: CourseSection) => void;
+}) {
+  const rows = useRovingRows(sections.length);
+  const selected = rows.selected != null ? sections[rows.selected] : null;
+  return (
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="table-wrap">
+        <table role="grid" aria-label="Sections" className="table">
+          <thead>
+            <tr role="row">
+              <th role="columnheader">CRN</th>
+              <th role="columnheader">Section</th>
+              <th role="columnheader">When</th>
+              <th role="columnheader">Instructor</th>
+              <th role="columnheader">Seats</th>
+              <th role="columnheader">
+                <span className="sr-only">Watch</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.map((section, rowIndex) => {
+              const note = sectionCpsNote(section.restrictions);
+              const picked = rows.selected === rowIndex;
+              return (
+                <tr
+                  key={section.crn}
+                  role="row"
+                  aria-selected={picked}
+                  tabIndex={rows.tabIndex(rowIndex)}
+                  ref={(node) => {
+                    rows.itemRefs.current[rowIndex] = node;
+                  }}
+                  className={picked ? "bg-surface-2" : undefined}
+                  onClick={() => rows.select(rowIndex)}
+                  onKeyDown={(event) => rows.move(event, rowIndex)}
+                >
+                  <td role="gridcell">
                     <Link className="font-semibold underline" href={sectionHref(term, section.crn)}>
                       {section.crn}
                     </Link>
                   </td>
-                  <td>
+                  <td role="gridcell">
                     {section.classType} {section.sectionNumber}
                     {section.honors ? " · Honors" : ""}
                     <div className="text-xs text-muted">{section.campus}</div>
+                    {note ? <div className="text-xs text-muted">{note}</div> : null}
                   </td>
-                  <td className="max-w-xs">{scheduleSummary(section)}<div className="text-xs text-muted">{meetingLabel(section)}</div></td>
-                  <td>
+                  <td role="gridcell" className="max-w-xs">
+                    {scheduleSummary(section)}
+                    <div className="text-xs text-muted">{meetingLabel(section)}</div>
+                  </td>
+                  <td role="gridcell">
                     {section.instructors?.[0] ? (
                       <Link className="underline" href={`/professor/${encodeURIComponent(section.instructors[0].name)}`}>
                         {instructorLabel(section)}
@@ -211,27 +262,56 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
                       instructorLabel(section)
                     )}
                   </td>
-                  <td>
+                  <td role="gridcell">
                     <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
                     <div className="text-xs text-muted">{seatsLabel(section)}</div>
                   </td>
-                  <td>
+                  <td role="gridcell">
                     <Button
                       className="tiny"
                       variant={isWatched(section.crn) ? "soft" : "ghost"}
                       type="button"
-                      onClick={() => (isWatched(section.crn) ? unwatch(section.crn) : watchSection(section))}
+                      onClick={() => onWatch(section)}
                     >
                       {isWatched(section.crn) ? "Watching" : "Watch seats"}
                     </Button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <SectionDetails term={term} section={selected ?? null} />
     </div>
+  );
+}
+
+function SectionDetails({ term, section }: { term: string; section: CourseSection | null }) {
+  if (!section) {
+    return (
+      <aside className="card p-4 text-sm text-muted" aria-label="Section details">
+        Select a section.
+      </aside>
+    );
+  }
+  const note = sectionCpsNote(section.restrictions);
+  return (
+    <aside className="card grid gap-2 p-4" aria-label="Section details">
+      <p className="text-sm font-semibold text-accent">CRN {section.crn}</p>
+      <h3 className="font-semibold">
+        {section.classType} {section.sectionNumber}
+      </h3>
+      <p className="text-sm">{scheduleSummary(section)}</p>
+      <p className="text-sm text-muted">{instructorLabel(section)}</p>
+      <p className="text-sm">
+        <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
+      </p>
+      {note ? <p className="text-xs text-muted">{note}</p> : null}
+      <Link className="text-sm underline" href={sectionHref(term, section.crn)}>
+        Open section
+      </Link>
+    </aside>
   );
 }
 

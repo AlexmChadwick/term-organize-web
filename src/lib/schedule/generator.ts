@@ -256,7 +256,7 @@ function roundCreditsUp(value: number | null | undefined): number {
  * leaves the entry empty so generation stays locked to it and reports it unavailable.
  */
 export function courseInputsFor(
-  planCourses: readonly { key: CourseKey; isRequired: boolean; excludedCRNs?: Iterable<string>; pinnedCRN?: string | null }[],
+  planCourses: readonly { key: CourseKey; isRequired: boolean; excludedCRNs?: Iterable<string>; pinnedCRN?: string | null; credits?: number | null }[],
   index: Pick<ScheduleCatalogLookup, "course" | "sectionsFor"> & {
     sectionByCrn?: (crn: string) => CourseSection | null | undefined;
   },
@@ -270,11 +270,12 @@ export function courseInputsFor(
       ? (all.find((section) => section.crn === pin) ??
         (lookedUp && sameKey({ subject: lookedUp.subject, number: lookedUp.number }, planCourse.key) ? lookedUp : null))
       : null;
+    const chosen = typeof planCourse.credits === "number" ? roundCreditsUp(planCourse.credits) : null;
     const input = courseInput(planCourse.key, pin ? (pinned ? [pinned] : []) : all, {
       isRequired: planCourse.isRequired,
       excludedCRNs: planCourse.excludedCRNs,
-      minCredits: roundCreditsUp(course?.minCredits ?? 0),
-      maxCredits: roundCreditsUp(course?.maxCredits ?? 0),
+      minCredits: chosen ?? roundCreditsUp(course?.minCredits ?? 0),
+      maxCredits: chosen ?? roundCreditsUp(course?.maxCredits ?? 0),
     });
     input.pinnedCRN = pin;
     return input;

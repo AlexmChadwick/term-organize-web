@@ -5,6 +5,7 @@ import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { pinSectionOnPlan } from "@/lib/schedule/pins";
 import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLocation, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel, weeklyMeetings } from "@/lib/models";
+import { sectionCpsNote } from "@/lib/restrictions";
 import Link from "next/link";
 import { useEffect } from "react";
 
@@ -52,6 +53,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
           {section.honors ? " · Honors" : ""}
           {section.instructionMethod ? ` · ${section.instructionMethod}` : ""}
         </p>
+        {sectionCpsNote(section.restrictions) ? <p className="mt-1 text-sm text-muted">{sectionCpsNote(section.restrictions)}</p> : null}
       </header>
       <section className="card p-5">
         <p className="text-lg">{scheduleSummary(section)}</p>

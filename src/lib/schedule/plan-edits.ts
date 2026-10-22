@@ -203,7 +203,14 @@ export class ResolvedPlan {
     let low = 0;
     let high = 0;
     for (const entry of entries) {
-      if (!entry.countsTowardsCredits || !entry.course) continue;
+      if (!entry.countsTowardsCredits) continue;
+      const chosen = entry.planCourse.credits;
+      if (typeof chosen === "number") {
+        low += chosen;
+        high += chosen;
+        continue;
+      }
+      if (!entry.course) continue;
       low += entry.course.minCredits;
       high += entry.course.maxCredits;
     }

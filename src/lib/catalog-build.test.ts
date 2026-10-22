@@ -132,4 +132,31 @@ describe("mergeCatalog", () => {
     expect(again.courses[0]?.maxCredits).toBe(1);
     expect(again.sections[0]?.seatsRemaining).toBe(1);
   });
+
+  it("keeps a credit range, widens it across sections, and keeps loaded restrictions", () => {
+    const existing = mergeCatalog({
+      fresh: [section({ creditHourLow: 1, creditHourHigh: 8, creditHours: 4, creditHourIndicator: "TO" })],
+      term: { code: "202710", bannerDescription: "Fall 2026 Semester" },
+      now: 1,
+    });
+    expect(existing.courses[0]?.minCredits).toBe(1);
+    expect(existing.courses[0]?.maxCredits).toBe(8);
+    expect(existing.courses[0]?.defaultCredits).toBe(4);
+    existing.sections[0]!.restrictions = [{ kind: "must", category: "Levels", values: ["CPS - Undergraduate Semester (UC)"] }];
+    const again = mergeCatalog({
+      existing,
+      fresh: [
+        section({ creditHourLow: 1, creditHourHigh: 8, creditHours: 4, creditHourIndicator: "TO" }),
+        section({ courseReferenceNumber: "10002", sequenceNumber: "02", creditHourLow: 2, creditHourHigh: 4, creditHours: 4, creditHourIndicator: "TO" }),
+      ],
+      term: existing.term,
+      now: 2,
+    });
+    expect(again.courses[0]?.minCredits).toBe(1);
+    expect(again.courses[0]?.maxCredits).toBe(8);
+    expect(again.courses[0]?.defaultCredits).toBe(4);
+    expect(again.sections.find((item) => item.crn === "10001")?.restrictions?.[0]?.values).toEqual(["CPS - Undergraduate Semester (UC)"]);
+    expect(again.sections.find((item) => item.crn === "10002")?.creditLow).toBe(2);
+    expect(again.sections.find((item) => item.crn === "10002")?.restrictions).toBeUndefined();
+  });
 });

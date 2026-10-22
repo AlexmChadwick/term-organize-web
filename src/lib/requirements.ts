@@ -354,6 +354,9 @@ export interface DegreePlanCourse {
   label: string;
   title: string;
   credits: number;
+  /** Banner range when this row is variable credit. Equal or missing values are fixed. */
+  creditLow?: number | null;
+  creditHigh?: number | null;
   /** Set when the student picked a section. Two entries may share a course number only when these differ. */
   crn?: string | null;
 }

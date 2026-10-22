@@ -23,7 +23,12 @@ export function canPlacePlanCourse(courses: readonly PlanCourse[], key: CourseKe
   return same.every((course) => course.pinnedCRN != null && course.pinnedCRN !== pinnedCRN);
 }
 
-export function placePlanCourse(plan: SchedulePlan, key: CourseKey, pinnedCRN?: string | null): SchedulePlan {
+export function placePlanCourse(
+  plan: SchedulePlan,
+  key: CourseKey,
+  pinnedCRN?: string | null,
+  chosen?: { credits: number; creditLow?: number | null; creditHigh?: number | null },
+): SchedulePlan {
   if (!canPlacePlanCourse(plan.courses, key, pinnedCRN)) return plan;
   const course: PlanCourse = {
     key,
@@ -31,6 +36,7 @@ export function placePlanCourse(plan: SchedulePlan, key: CourseKey, pinnedCRN?: 
     excludedCRNs: [],
     colorIndex: nextColorIndex(plan),
     ...(pinnedCRN ? { pinnedCRN } : {}),
+    ...(chosen ? { credits: chosen.credits, creditLow: chosen.creditLow, creditHigh: chosen.creditHigh } : {}),
   };
   const selectedCRNs = pinnedCRN && !plan.selectedCRNs.includes(pinnedCRN) ? [...plan.selectedCRNs, pinnedCRN] : plan.selectedCRNs;
   return { ...plan, courses: [...plan.courses, course], selectedCRNs };
@@ -170,7 +176,12 @@ export function mergeRefreshedSections(
 ): CourseSection[] {
   const arrived = new Set(incoming.map((section) => section.crn));
   const kept = previous.filter((section) => pinnedCRNs.includes(section.crn) && !arrived.has(section.crn));
-  return [...incoming, ...kept];
+  const merged = incoming.map((section) => {
+    const prior = previous.find((item) => item.crn === section.crn);
+    if (!prior || section.restrictions != null) return section;
+    return { ...section, restrictions: prior.restrictions };
+  });
+  return [...merged, ...kept];
 }
 
 export function applyCourseMoves(

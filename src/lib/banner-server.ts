@@ -9,6 +9,7 @@
 
 import path from "node:path";
 import { catalogCodesContain, mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parseMutualExclusions, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
+import { parseRestrictions } from "./restrictions";
 import { listStoredTermCodes, loadBestCatalog, saveBuiltCatalog } from "./catalog-store";
 import type { CourseInfo } from "./course-info";
 import { OfferingHistory } from "./degree/reordering";
@@ -199,7 +200,7 @@ function clearCourseDetails(catalog: TermCatalog): TermCatalog {
       department: null,
       detailsLoaded: false,
     })),
-    sections: catalog.sections.map((section) => ({ ...section, description: null, prereqs: null, coreqs: null })),
+    sections: catalog.sections.map((section) => ({ ...section, description: null, prereqs: null, coreqs: null, restrictions: null })),
   };
 }
 
@@ -281,6 +282,20 @@ export function fillTermCourseDetails(termCode: string, limit = DETAIL_BATCH): P
   return enqueueDetail(termCode, () => fillTermCourseDetailsOnce(termCode, limit));
 }
 
+/** One restriction page at a time, with a short pause, so a detail batch does not hammer Banner. */
+async function loadSectionRestrictions(term: string, sections: CourseSection[]): Promise<void> {
+  for (const section of sections) {
+    if (section.restrictions != null) continue;
+    try {
+      const html = await postForm("searchResults/getRestrictions", term, section.crn);
+      section.restrictions = parseRestrictions(html);
+    } catch {
+      // Unknown stays hidden.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 75));
+  }
+}
+
 async function fillTermCourseDetailsOnce(termCode: string, limit: number): Promise<{ filled: number; remaining: number; catalog: TermCatalog } | null> {
   const source = await loadBestCatalog(termCode);
   if (!source) return null;
@@ -311,6 +326,7 @@ async function fillTermCourseDetailsOnce(termCode: string, limit: number): Promi
           section.description = parseDescription(html);
         }
       }
+      await loadSectionRestrictions(termCode, sections);
     } catch {
       course.detailsLoaded = true;
     }
