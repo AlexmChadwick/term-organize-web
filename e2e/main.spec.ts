@@ -12,7 +12,7 @@ test("home, search, and a course page", async ({ page }) => {
   const course = page.getByRole("link", { name: /CS 3000/ }).first();
   await expect(course).toBeVisible();
   await course.click();
-  await expect(page).toHaveURL(/\/course\/202710\/CS\/3000/);
+  await expect(page).toHaveURL(/\/course\/202730\/CS\/3000/);
   await expect(page.getByRole("heading", { name: "Algorithms and Data" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Prerequisites" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sections" })).toBeVisible();
