@@ -6,6 +6,13 @@ A browser version of [Term Organize](https://github.com/AlexmChadwick/Northeaste
 
 Course titles, descriptions, seats, and instructor names come from Northeastern’s public class search and academic catalog. That data is © Northeastern University and is not covered by this project’s license. The Fall 2026 and Spring 2027 snapshots in `data/` were converted from the app’s bundled catalogs.
 
+## Install
+
+Term Organize is an early beta. It is unofficial and not affiliated with Northeastern University. There is no hosted version yet, so you run it on your own computer.
+
+- **From source:** follow "Run locally" below (Node.js 22 and npm).
+- **Standalone build:** when available, the [Releases page](https://github.com/AlexmChadwick/term-organize-web/releases) has `term-organize-web-<version>.tar.gz`. Unpack it and run `node server.js`. `RUN.md` in the archive has the details.
+
 ## Run locally
 
 ```bash
