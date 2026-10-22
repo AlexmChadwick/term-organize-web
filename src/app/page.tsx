@@ -48,7 +48,7 @@ export default function HomePage() {
           <ul className="mt-2 grid gap-1 text-sm leading-snug text-muted">
             <li>Unofficial tool. It reads public Banner and catalog pages. It cannot enroll you.</li>
             <li>Schedules, plans, and seat alerts stay in this browser until you export them.</li>
-            <li>Fall 2026 is already downloaded. Any other term Banner lists is fetched the first time you open it, including that term’s own course descriptions.</li>
+            <li>Fall 2026 and Spring 2027 are already downloaded. Any other term Banner lists is fetched the first time you open it, including that term’s own course descriptions.</li>
           </ul>
           <button className="btn mt-3" type="button" onClick={() => updateUser((prev) => ({ ...prev, preferences: { ...prev.preferences, hasCompletedOnboarding: true } }))}>
             Got it

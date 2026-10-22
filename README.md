@@ -4,7 +4,14 @@ A browser version of [Term Organize](https://github.com/AlexmChadwick/Northeaste
 
 **Not affiliated with, endorsed by, or sponsored by Northeastern University or Sandbox.**
 
-Course titles, descriptions, seats, and instructor names come from Northeastern’s public class search and academic catalog. That data is © Northeastern University and is not covered by this project’s license. The Fall 2026 snapshot in `data/` was converted from the app’s bundled catalog.
+Course titles, descriptions, seats, and instructor names come from Northeastern’s public class search and academic catalog. That data is © Northeastern University and is not covered by this project’s license. The Fall 2026 and Spring 2027 snapshots in `data/` were converted from the app’s bundled catalogs.
+
+## Install
+
+Term Organize is an early beta. It is unofficial and not affiliated with Northeastern University. There is no hosted version yet, so you run it on your own computer.
+
+- **From source:** follow "Run locally" below (Node.js 22 and npm).
+- **Standalone build:** when available, the [Releases page](https://github.com/AlexmChadwick/term-organize-web/releases) has `term-organize-web-<version>.tar.gz`. Unpack it and run `node server.js`. `RUN.md` in the archive has the details.
 
 ## Run locally
 
@@ -27,7 +34,7 @@ npm run e2e
 
 ## What it does
 
-- Search any term Banner lists. Fall 2026 ships with the site. Another term is downloaded the first time you open it, including that term’s own course descriptions, cached in IndexedDB, and searched the same way, including shorthand (`fundies`, `linalg`), small typos, and CRNs.
+- Search any term Banner lists. Fall 2026 and Spring 2027 ship with the site. Another term is downloaded the first time you open it, including that term’s own course descriptions, cached in IndexedDB, and searched the same way, including shorthand (`fundies`, `linalg`), small typos, and CRNs.
 - Course pages with descriptions, prerequisite and corequisite trees, “prerequisite for,” and a live Banner refresh of sections and seats.
 - A week calendar, conflict checks, a constraint search with a preferences survey and a deterministic reading of plain-language wishes, ranked options with reasons, an explanation when nothing fits, `.ics` export, a PNG of the week, and copyable CRNs.
 - Degree plans: import a degree-audit View Plan PDF or text file, edit it, flag duplicates and missing prerequisites, total the credits, export the same A4 layout, and pull courses in from a schedule. When a course is missing a prerequisite, the page suggests a semester to move it to, using about two years of offering history.

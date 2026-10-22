@@ -1,5 +1,6 @@
 "use client";
 
+import { bundledTermCodes, bundledTermOptions, initialTermCode, mergeTermOptions, newestBundledTermCode, type TermOption } from "@/lib/bundled-terms";
 import { refreshCreditsFromCatalog } from "@/lib/credit-sync";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
@@ -33,11 +34,7 @@ function missingDetails(catalog: TermCatalog): boolean {
 
 export type ThemeChoice = "light" | "dark" | "system";
 
-export interface TermOption {
-  code: string;
-  name: string;
-  bundled: boolean;
-}
+export type { TermOption };
 
 interface AppContextValue {
   ready: boolean;
@@ -72,7 +69,6 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 const THEME_KEY = "term-organize.theme";
-const BUNDLED = "202710";
 
 function makePlan(termCode: string, name = "My schedule"): SchedulePlan {
   const now = Date.now();
@@ -113,13 +109,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [catalogStatus, setCatalogStatus] = useState<AppContextValue["catalogStatus"]>("loading");
   const [catalogDetail, setCatalogDetail] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [terms, setTerms] = useState<TermOption[]>([{ code: BUNDLED, name: "Fall 2026", bundled: true }]);
+  const [terms, setTerms] = useState<TermOption[]>(bundledTermOptions());
 
-  const termCode = user.preferences.selectedTermCode || BUNDLED;
+  const termCode = initialTermCode(user.preferences.selectedTermCode);
 
   useEffect(() => {
     const stored = loadUserData();
-    if (!stored.preferences.selectedTermCode) stored.preferences.selectedTermCode = BUNDLED;
+    if (!stored.preferences.selectedTermCode) stored.preferences.selectedTermCode = newestBundledTermCode();
     readyRef.current = true;
     setUser(stored);
     const savedTheme = (localStorage.getItem(THEME_KEY) as ThemeChoice | null) ?? "system";
@@ -243,10 +239,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then((res) => res.json())
       .then((body: { terms?: { code: string; name: string }[]; bundled?: string[] }) => {
         if (cancelled || !body.terms?.length) return;
-        const bundled = new Set(body.bundled ?? [BUNDLED]);
-        const options = body.terms.map((term) => ({ code: term.code, name: term.name, bundled: bundled.has(term.code) }));
-        if (!options.some((term) => term.code === BUNDLED)) options.unshift({ code: BUNDLED, name: "Fall 2026", bundled: true });
-        setTerms(options);
+        setTerms(mergeTermOptions(body.terms, body.bundled?.length ? body.bundled : bundledTermCodes()));
       })
       .catch(() => undefined);
     return () => {

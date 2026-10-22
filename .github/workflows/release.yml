@@ -1,0 +1,84 @@
+name: Release
+
+# Tag pushes only. Branch pushes and pull requests do not build a release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Package standalone server
+        id: package
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          node scripts/package-release.mjs "$version"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "archive=term-organize-web-${version}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Checksum and sign
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        working-directory: release
+        run: |
+          set -euo pipefail
+          archive="term-organize-web-${{ steps.package.outputs.version }}.tar.gz"
+          sha256sum "$archive" > SHA256SUMS
+          umask 077
+          keyfile=$(mktemp)
+          passfile=$(mktemp)
+          trap 'rm -f "$keyfile" "$passfile"' EXIT
+          printf '%s\n' "$GPG_PRIVATE_KEY" > "$keyfile"
+          printf '%s' "$GPG_PASSPHRASE" > "$passfile"
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passfile" --import "$keyfile"
+          rm -f "$keyfile"
+          expected=52763E589A37573E2C755AE2A12052B3ED284C89
+          actual=$(gpg --batch --with-colons --fingerprint "$expected" | awk -F: '$1 == "fpr" { print $10; exit }')
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Signing key fingerprint does not match the release key."
+            exit 1
+          fi
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file "$passfile" \
+            --local-user "$expected" \
+            --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+          gpg --batch --verify SHA256SUMS.asc SHA256SUMS
+          rm -f "$passfile"
+
+      - name: Draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${{ steps.package.outputs.version }}"
+          notes=$(printf '%s\n\n%s\n\n%s\n' \
+            "Draft build of Term Organize web ${version}." \
+            "Unpack term-organize-web-${version}.tar.gz and run node server.js. See RUN.md in the archive." \
+            "Check the archive with SHA256SUMS and SHA256SUMS.asc.")
+          args=(release create "$tag" --draft --title "$tag" --notes "$notes")
+          if [[ "$tag" == *-rc* ]]; then
+            args+=(--prerelease)
+          fi
+          args+=(
+            "release/term-organize-web-${version}.tar.gz"
+            "release/SHA256SUMS"
+            "release/SHA256SUMS.asc"
+          )
+          gh "${args[@]}"
