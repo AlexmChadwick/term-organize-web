@@ -8,7 +8,6 @@
  * DegreeRequirementsSupport.swift, and the range-limit helpers the audit applies.
  */
 
-import { entriesCountSeparately } from "@/lib/degree-logic";
 import { CourseEquivalences, equivalencesFromDeclarations } from "@/lib/equivalences";
 import type { CourseKey } from "@/lib/models";
 import { compareCourseKeys, creditNumber, keyId, sameKey, type NuPathInfo } from "@/lib/models";
@@ -82,6 +81,11 @@ export interface CourseUse {
 
 export function courseUseIsCompleted(use: CourseUse): boolean {
   return use.semester == null;
+}
+
+/** Course code shown for a row. A later copy of the same number gets “ (2)”, “ (3)”, … */
+export function courseUseName(use: Pick<CourseUse, "key" | "instance">): string {
+  return use.instance === 0 ? keyId(use.key) : `${keyId(use.key)} (${use.instance + 1})`;
 }
 
 export function countsAsLabel(use: CourseUse): string | null {
@@ -595,23 +599,10 @@ class AuditEngine {
         id: keyId(key),
         crn: course.crn ?? null,
       };
-      const earlier = (this.instances.get(keyId(key)) ?? []).map((id) => this.pool.get(id)!).filter(Boolean);
-      const repeated = earlier.find((use) => !entriesCountSeparately(draft, use));
-      if (repeated) {
-        const better = courseUseIsCompleted(repeated) === courseUseIsCompleted(draft)
-          ? draft.credits > repeated.credits
-          : courseUseIsCompleted(draft);
-        if (better) {
-          draft.instance = repeated.instance;
-          draft.id = identityOfCourseUse(draft);
-          this.pool.set(draft.id, draft);
-        }
-        return;
-      }
-      draft.instance = earlier.length;
-      draft.id = identityOfCourseUse(draft);
-      this.pool.set(draft.id, draft);
       const list = this.instances.get(keyId(key)) ?? [];
+      draft.instance = list.length;
+      draft.id = course.id;
+      this.pool.set(draft.id, draft);
       list.push(draft.id);
       this.instances.set(keyId(key), list);
     };
@@ -777,7 +768,9 @@ class AuditEngine {
       if (current?.type !== "kind") continue;
       for (const substitution of this.substitutionsByRule.get(rule.id) ?? []) {
         if (substitution.change.type !== "countCourse") continue;
-        const taken = this.standIn(substitution.change.course);
+        const taken = substitution.change.rowID
+          ? this.rowStandIn(substitution.change.rowID, substitution.change.course)
+          : this.standIn(substitution.change.course);
         if (!taken) {
           this.unmatched.push(substitution);
           continue;
@@ -987,7 +980,7 @@ class AuditEngine {
         else if (chosen.length === 0) detail = requirement.count === 1 ? "No course in the plan has it" : `Needs ${requirement.count} courses`;
         else detail = found;
       }
-      items.push({ id: requirement.path.code, title: nupathTitle(requirement), status, detail, courses: chosen.map((use) => use.id) });
+      items.push({ id: requirement.path.code, title: nupathTitle(requirement), status, detail, courses: chosen.map((use) => courseUseName(use)) });
     }
     const met = items.filter((item) => item.status != null && statusIsSatisfied(item.status));
     const open = items.filter((item) => item.status == null || !statusIsSatisfied(item.status));
@@ -1252,6 +1245,14 @@ class AuditEngine {
     const list = this.used.get(ruleID) ?? [];
     list.push(placed);
     this.used.set(ruleID, list);
+  }
+
+  /** The named plan row, when it is still available and is that course. A sibling row is not a substitute. */
+  private rowStandIn(rowID: string, course: CourseKey): string | null {
+    if (!this.available.has(rowID)) return null;
+    const use = this.pool.get(rowID);
+    if (!use || !sameKey(use.key, course)) return null;
+    return rowID;
   }
 
   private standIn(required: CourseKey, claimed: ReadonlySet<string> = new Set()): string | null {
@@ -1573,10 +1574,6 @@ class AuditEngine {
       }
     }
   }
-}
-
-function identityOfCourseUse(use: CourseUse): string {
-  return use.instance === 0 ? keyId(use.key) : `${keyId(use.key)} (${use.instance + 1})`;
 }
 
 function pushMap<T>(map: Map<string, T[]>, key: string, value: T): void {

@@ -10,7 +10,6 @@
 
 import { bannerCodeForSeason } from "@/lib/degree-format";
 import { creditNumber, keyId, termApproximateWindow, type CourseKey } from "@/lib/models";
-import { canPlacePlanCourse } from "@/lib/schedule/pins";
 import { PLAN_SEASON_EXPORT, termCredits, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm } from "@/lib/requirements";
 import { emptyPlanFilters, newId, nextColorIndex, type SchedulePlan } from "@/lib/user";
 
@@ -78,18 +77,14 @@ export interface SemesterSchedule {
  * when it creates a schedule, the way `UserDataStore.scheduleForDegreePlan` does.
  */
 export function scheduleForDegreePlan(plans: SchedulePlan[], semester: DegreePlanTerm, termCode: string): SemesterSchedule | null {
-  const seen = new Set<string>();
   const entries: { key: CourseKey; crn: string | null }[] = [];
   for (const course of semester.courses) {
     if (!course.key) continue;
-    const id = course.crn ? `${keyId(course.key)}#${course.crn}` : keyId(course.key);
-    if (seen.has(id)) continue;
-    seen.add(id);
     entries.push({ key: course.key, crn: course.crn ?? null });
   }
   if (entries.length === 0) return null;
-  const wanted = new Set(entries.map((entry) => (entry.crn ? `${keyId(entry.key)}#${entry.crn}` : keyId(entry.key))));
-  const existing = plansInTerm(plans, termCode).find((plan) => sameCourseSet(plan, wanted));
+  const wanted = entries.map((entry) => (entry.crn ? `${keyId(entry.key)}#${entry.crn}` : keyId(entry.key))).sort();
+  const existing = plansInTerm(plans, termCode).find((plan) => sameCourseMultiset(plan, wanted));
   if (existing) return { plan: existing, isNew: false, courseCount: entries.length };
   const schedule = createSchedulePlan(plans, scheduleName(semester, plansInTerm(plans, termCode).map((plan) => plan.name)), termCode);
   for (const entry of entries) addScheduleCourse(schedule, entry.key, entry.crn);
@@ -102,11 +97,10 @@ function plansInTerm(plans: readonly SchedulePlan[], termCode: string): Schedule
     .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.updatedAt - a.updatedAt);
 }
 
-function sameCourseSet(plan: SchedulePlan, wanted: ReadonlySet<string>): boolean {
-  const have = new Set(plan.courses.map((course) => (course.pinnedCRN ? `${keyId(course.key)}#${course.pinnedCRN}` : keyId(course.key))));
-  if (have.size !== wanted.size) return false;
-  for (const id of wanted) if (!have.has(id)) return false;
-  return true;
+function sameCourseMultiset(plan: SchedulePlan, wanted: readonly string[]): boolean {
+  const have = plan.courses.map((course) => (course.pinnedCRN ? `${keyId(course.key)}#${course.pinnedCRN}` : keyId(course.key))).sort();
+  if (have.length !== wanted.length) return false;
+  return have.every((id, index) => id === wanted[index]);
 }
 
 function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: string): SchedulePlan {
@@ -127,8 +121,8 @@ function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: strin
   return plan;
 }
 
+/** Copies one degree-plan row. A repeated course number stays a second row, and a missing CRN stays missing. */
 function addScheduleCourse(plan: SchedulePlan, key: CourseKey, pinnedCRN?: string | null): void {
-  if (!canPlacePlanCourse(plan.courses, key, pinnedCRN)) return;
   plan.courses.push({
     key,
     isRequired: true,

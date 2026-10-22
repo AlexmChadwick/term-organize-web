@@ -188,16 +188,20 @@ export function statusOf(requisite: Requisite | null | undefined, taken: Set<str
   return missing ? { kind: "missing", text: missing } : { kind: "met" };
 }
 
+/** Course numbers that appear more than once, across completed and planned rows. */
 export function duplicateKeys(plan: DegreePlan): Set<string> {
-  const planned = plan.terms.flatMap((t) => t.courses);
-  const duplicates = new Set<string>();
-  planned.forEach((course, index) => {
-    if (!course.key) return;
-    const repeatsPlanned = planned.slice(0, index).some((other) => other.key && keyId(other.key) === keyId(course.key!) && !entriesCountSeparately(other, course));
-    const repeatsCompleted = plan.completed.some((other) => other.key && keyId(other.key) === keyId(course.key!) && !entriesCountSeparately(other, course));
-    if (repeatsPlanned || repeatsCompleted) duplicates.add(keyId(course.key));
-  });
-  return duplicates;
+  const counts = new Map<string, number>();
+  for (const course of [...plan.completed, ...plan.terms.flatMap((term) => term.courses)]) {
+    if (!course.key) continue;
+    const id = keyId(course.key);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([id]) => id));
+}
+
+/** Shown on every row whose course number appears again. It does not block the plan. */
+export function duplicateRowWarning(label: string): string {
+  return `${label} is in your plan more than once. That's fine for special topics; otherwise remove the extra copy.`;
 }
 
 export function planTermMatches(term: DegreePlanTerm, banner: Term): boolean {
@@ -280,21 +284,11 @@ export function scheduleSuggestions(options: {
   };
   const plans = [...options.degreePlans].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.updatedAt - a.updatedAt);
   for (const plan of plans) {
-    const done = new Set(plan.completed.flatMap((c) => (c.key ? [keyId(c.key)] : [])));
     const candidates = plan.terms.flatMap((planTerm) => {
-      const seen = new Set<string>();
-      const seenCrns = new Set<string>();
       const entries = planTerm.courses.flatMap((c) => {
         if (!c.key) return [];
-        const id = keyId(c.key);
-        if (c.crn) {
-          if (seenCrns.has(c.crn)) return [];
-          seenCrns.add(c.crn);
-          return [{ key: c.key, crn: c.crn }];
-        }
-        if (done.has(id) || already.has(id) || seen.has(id)) return [];
-        seen.add(id);
-        return [{ key: c.key, crn: null as string | null }];
+        if (!c.crn && already.has(keyId(c.key))) return [];
+        return [{ key: c.key, crn: c.crn ?? null }];
       });
       if (!entries.length) return [];
       const month = planTerm.year * 12 + seasonStartMonth(planTerm.season) - 1;
@@ -329,24 +323,9 @@ export function scheduleSuggestions(options: {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 2)
     .flatMap((plan) => {
-      const picked = plan.courses.flatMap((course) => {
-        const id = keyId(course.key);
-        if (course.pinnedCRN) return [{ key: course.key, crn: course.pinnedCRN }];
-        if (already.has(id)) return [];
-        return [{ key: course.key, crn: null as string | null }];
-      });
-      const seenOpen = new Set<string>();
-      const seenCrns = new Set<string>();
-      const entries = picked.filter((entry) => {
-        if (entry.crn) {
-          if (seenCrns.has(entry.crn)) return false;
-          seenCrns.add(entry.crn);
-          return true;
-        }
-        const id = keyId(entry.key);
-        if (seenOpen.has(id)) return false;
-        seenOpen.add(id);
-        return true;
+      const entries = plan.courses.flatMap((course) => {
+        if (!course.pinnedCRN && already.has(keyId(course.key))) return [];
+        return [{ key: course.key, crn: course.pinnedCRN ?? null }];
       });
       if (!entries.length) return [];
       return [
@@ -392,7 +371,6 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
     draft.completed = source.completed.map((c) => ({ ...c, id: newId() }));
     draft.terms = source.terms.map((term) => ({ ...term, id: newId(), courses: term.courses.map((c) => ({ ...c, id: newId() })) }));
   }
-  const done = new Set(draft.completed.flatMap((c) => (c.key ? [keyId(c.key)] : [])));
   for (const plan of schedulePlans) {
     if (!plan.isPrimary || !plan.courses.length) continue;
     const banner: Term = { code: plan.termCode, bannerDescription: "" };
@@ -403,14 +381,20 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
       draft.terms.push({ id: newId(), season, year, courses: [] });
       termPosition = draft.terms.length - 1;
     }
-    const present = new Set(draft.terms[termPosition]!.courses.flatMap((c) => (c.key && !c.crn ? [keyId(c.key)] : [])));
-    const presentCrns = new Set(draft.terms[termPosition]!.courses.flatMap((c) => (c.crn ? [c.crn] : [])));
+    const unmatched = new Map<string, number>();
+    for (const course of draft.terms[termPosition]!.courses) {
+      if (!course.key) continue;
+      const mark = course.crn ? `${keyId(course.key)}#${course.crn}` : keyId(course.key);
+      unmatched.set(mark, (unmatched.get(mark) ?? 0) + 1);
+    }
     for (const planCourse of plan.courses) {
-      const id = keyId(planCourse.key);
       const pin = planCourse.pinnedCRN ?? null;
-      if (pin) {
-        if (presentCrns.has(pin)) continue;
-      } else if (present.has(id) || done.has(id)) continue;
+      const mark = pin ? `${keyId(planCourse.key)}#${pin}` : keyId(planCourse.key);
+      const left = unmatched.get(mark) ?? 0;
+      if (left > 0) {
+        unmatched.set(mark, left - 1);
+        continue;
+      }
       const course = courseLookup(plan.termCode, planCourse.key);
       draft.terms[termPosition]!.courses.push({
         id: newId(),
@@ -420,8 +404,6 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
         credits: course?.credits ?? 4,
         ...(pin ? { crn: pin } : {}),
       });
-      if (pin) presentCrns.add(pin);
-      else present.add(id);
     }
   }
   draft.terms.sort((a, b) => termSortKey(a) - termSortKey(b));

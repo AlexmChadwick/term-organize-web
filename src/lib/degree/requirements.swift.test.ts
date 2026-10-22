@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fewestCreditsChoice, nearMisses, resultFor, ruleCounting, ruleResults, runDegreeAudit, satisfiedCount, totalCount, uncheckedReason } from "@/lib/degree/audit";
+import { courseUseName, fewestCreditsChoice, nearMisses, resultFor, ruleCounting, ruleResults, runDegreeAudit, satisfiedCount, totalCount, uncheckedReason } from "@/lib/degree/audit";
 import { applyCourseNumberLimit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, editionURL, parseUniversitywide, programsFromIndex, suggestedPrograms, universitywideLink } from "@/lib/degree/catalog-parser";
 import { petitionQuestions } from "@/lib/degree/substitutions";
@@ -217,14 +217,14 @@ describe("DegreeRequirementsTests", () => {
 
     const electiveResult = must(resultFor(audit, electives.id), "electives");
     expect(electiveResult.status).toBe("planned");
-    expect(new Set(keyIdsOf(electiveResult.used))).toEqual(new Set(["DS 3000", "CS 4410"]));
+    expect(new Set(keyIdsOf(electiveResult.used))).toEqual(new Set(["CS 3000", "CS 3800"]));
     const scienceResult = must(resultFor(audit, science.id), "science");
     expect(scienceResult.status).toBe("planned");
-    expect(new Set(keyIdsOf(scienceResult.used))).toEqual(new Set(["CS 3800", "CS 4100"]));
+    expect(new Set(keyIdsOf(scienceResult.used))).toEqual(new Set(["CS 4100", "DS 3000"]));
     expect(scienceResult.substitutions[0]?.note).toBe("Petition approved");
 
     expect(new Set(audit.unmatchedSubstitutions.map((item) => item.ruleTitle))).toEqual(new Set(["CS 4400", "Electives"]));
-    const counted = ruleResults(audit).flatMap((result) => result.used.map((use) => keyId(use.key)));
+    const counted = ruleResults(audit).flatMap((result) => result.used.map((use) => use.id));
     expect(counted.length).toBe(new Set(counted).size);
   });
 
@@ -394,11 +394,11 @@ describe("DegreeRequirementsTests", () => {
     const audit = runDegreeAudit(plan, req);
     const result = must(resultFor(audit, electives.id), "electives");
     expect(result.status).toBe("planned");
-    expect(result.used.map((use) => use.id).sort()).toEqual(["CS 4973", "CS 4973 (2)"]);
+    expect(result.used.map((use) => courseUseName(use)).sort()).toEqual(["CS 4973", "CS 4973 (2)"]);
     const counted = [...ruleResults(audit).flatMap((item) => item.used), ...audit.unused];
-    expect(counted.filter((use) => keyId(use.key) === "MKTG 2602").length).toBe(1);
+    expect(counted.filter((use) => keyId(use.key) === "MKTG 2602").length).toBe(2);
     expect(new Set(counted.map((use) => use.id)).size).toBe(counted.length);
-    expect(duplicateKeys(plan)).toEqual(new Set(["MKTG 2602"]));
+    expect(duplicateKeys(plan)).toEqual(new Set(["CS 4973", "MKTG 2602"]));
   });
 
   it("requiredAlternativesMakeRoom", () => {

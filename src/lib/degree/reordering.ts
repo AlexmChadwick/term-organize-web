@@ -657,7 +657,7 @@ export function reorderSuggestions(options: {
     const matches = plan.terms[origin]!.courses.filter((item) => item.key && sameKey(item.key, key));
     const targets = matches.length > 1 ? matches : matches.slice(0, 1);
     for (const course of targets) {
-      const mark = matches.length > 1 && course?.crn ? `${keyId(key)}#${course.crn}` : keyId(key);
+      const mark = matches.length > 1 && course ? course.id : keyId(key);
       if (seen.has(mark) || !course) continue;
       seen.add(mark);
       candidates.push(...engine.candidates(course, order, blockingSet));

@@ -10,7 +10,7 @@ import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide
 import { courseAttributes } from "@/lib/degree/nupath";
 import { declareEquivalence, planCourseKeys, unorderedPairId, type DegreeEquivalencePrompt } from "@/lib/degree/suggestions";
 import { convertRenumbering, coursesToLookUpForRenumbering, likelyRenumberings, type LikelyRenumbering } from "@/lib/degree/substitutions";
-import { duplicateKeys, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
+import { duplicateKeys, duplicateRowWarning, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
 import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
@@ -480,7 +480,6 @@ function PlanEditor({
       <p className="text-sm">
         {completedCredits(plan)} completed · {plannedCredits(plan)} planned · {total} total credits
       </p>
-      {duplicates.size ? <p className="text-sm text-bad">Repeated courses: {[...duplicates].join(", ")}. Topics with different titles can count separately.</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" type="button" onClick={onExportPDF}>Export PDF</Button>
         <Button variant="ghost" type="button" onClick={onExportText}>Export text</Button>
@@ -513,7 +512,7 @@ function PlanEditor({
       ) : null}
       <div>
         <h3 className="font-semibold">Completed</h3>
-        <CourseList courses={plan.completed} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
+        <CourseList courses={plan.completed} duplicates={duplicates} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
       </div>
       {plan.terms.map((term, termIndex) => (
         <div key={term.id} className="rounded-2xl border border-line p-3">
@@ -534,7 +533,7 @@ function PlanEditor({
               Remove semester
             </Button>
           </div>
-          <CourseList courses={term.courses} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
+          <CourseList courses={term.courses} duplicates={duplicates} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
@@ -575,7 +574,36 @@ function blockingCourses(
   return keys;
 }
 
-function CourseList({ courses, onChange, termCode, retiredNote }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string; retiredNote: (key: CourseKey) => string | null }) {
+function planRows(plan: DegreePlan): { id: string; key: CourseKey; label: string }[] {
+  const raw = [
+    ...plan.completed.flatMap((course) => (course.key ? [{ id: course.id, key: course.key, label: `${course.label} · completed` }] : [])),
+    ...plan.terms.flatMap((term) =>
+      term.courses.flatMap((course) =>
+        course.key ? [{ id: course.id, key: course.key, label: `${course.label} · ${PLAN_SEASON_SHORT[term.season]} ${term.year}` }] : [],
+      ),
+    ),
+  ];
+  const seen = new Map<string, number>();
+  return raw.map((row) => {
+    const count = (seen.get(row.label) ?? 0) + 1;
+    seen.set(row.label, count);
+    return count === 1 ? row : { ...row, label: `${row.label} (${count})` };
+  });
+}
+
+function CourseList({
+  courses,
+  duplicates,
+  onChange,
+  termCode,
+  retiredNote,
+}: {
+  courses: DegreePlanCourse[];
+  duplicates: Set<string>;
+  onChange: (courses: DegreePlanCourse[]) => void;
+  termCode: string;
+  retiredNote: (key: CourseKey) => string | null;
+}) {
   if (!courses.length) return <p className="mt-2 text-sm text-muted">None yet.</p>;
   return (
     <ul className="mt-2 grid gap-2">
@@ -594,6 +622,7 @@ function CourseList({ courses, onChange, termCode, retiredNote }: { courses: Deg
           <button type="button" className="text-muted" onClick={() => onChange(courses.filter((item) => item.id !== course.id))}>
             Remove
           </button>
+          {course.key && duplicates.has(keyId(course.key)) ? <p className="basis-full text-muted">{duplicateRowWarning(keyId(course.key))}</p> : null}
         </li>
       ))}
     </ul>
@@ -622,6 +651,8 @@ function SubstitutionForm({
   const [note, setNote] = useState("");
   const [equivFrom, setEquivFrom] = useState("");
   const [equivTo, setEquivTo] = useState("");
+  const rows = planRows(plan);
+  const [rowID, setRowID] = useState(rows[0]?.id ?? "");
 
   return (
     <div className="grid gap-3 rounded-2xl border border-line p-3">
@@ -655,7 +686,18 @@ function SubstitutionForm({
             <option value="replace">Petition (replace the rule)</option>
           </Select>
         </label>
-        {kind !== "waive" ? (
+        {kind === "countCourse" && rows.length ? (
+          <label className="label md:col-span-2">
+            Plan row
+            <Select value={rows.some((row) => row.id === rowID) ? rowID : rows[0]!.id} onChange={(event) => setRowID(event.target.value)}>
+              {rows.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : kind !== "waive" ? (
           <label className="label md:col-span-2">
             Courses
             <TextInput value={courseText} onChange={(event) => setCourseText(event.target.value)} placeholder="CS 2500, CS 2510" />
@@ -676,12 +718,15 @@ function SubstitutionForm({
             const key = parseCourseKey(part.trim());
             return key ? [key] : [];
           });
+          const selected = rows.find((row) => row.id === rowID) ?? rows[0];
           const change =
             kind === "waive"
               ? { type: "waive" as const }
-              : kind === "countCourse"
-                ? { type: "countCourse" as const, course: keys[0] ?? { subject: "CS", number: "0000" } }
-                : { type: "replace" as const, replacement: { courses: keys, count: keys.length || 1, hours: null } };
+              : kind === "countCourse" && selected
+                ? { type: "countCourse" as const, course: selected.key, rowID: selected.id }
+                : kind === "countCourse"
+                  ? { type: "countCourse" as const, course: keys[0] ?? { subject: "CS", number: "0000" } }
+                  : { type: "replace" as const, replacement: { courses: keys, count: keys.length || 1, hours: null } };
           onChange({
             ...plan,
             substitutions: [
@@ -699,7 +744,9 @@ function SubstitutionForm({
         {plan.substitutions.map((item) => (
           <li key={item.id} className="flex justify-between gap-2">
             <span>
-              {item.change.type} · {item.ruleTitle} {item.note ? `· ${item.note}` : ""}
+              {item.change.type} · {item.ruleTitle}
+              {item.change.type === "countCourse" ? ` · ${keyId(item.change.course)}` : ""}
+              {item.note ? ` · ${item.note}` : ""}
             </span>
             <button type="button" className="text-muted" onClick={() => onChange({ ...plan, substitutions: plan.substitutions.filter((entry) => entry.id !== item.id) })}>
               Remove

@@ -255,7 +255,7 @@ function trimNumber(n: number): string {
 }
 
 export type SubstitutionChange =
-  | { type: "countCourse"; course: CourseKey }
+  | { type: "countCourse"; course: CourseKey; /** Degree-plan row. Absent on older substitutions, which take the first free row. */ rowID?: string | null }
   | { type: "replace"; replacement: RequirementReplacement }
   | { type: "waive" };
 
