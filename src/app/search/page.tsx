@@ -128,6 +128,14 @@ function SearchScreen() {
             <input type="checkbox" checked={filters.honorsOnly} onChange={(event) => setFilters({ ...filters, honorsOnly: event.target.checked })} />
             Honors sections
           </label>
+          <label className="label flex-row items-center gap-2">
+            <input type="checkbox" checked={filters.noPrerequisites} onChange={(event) => setFilters({ ...filters, noPrerequisites: event.target.checked })} />
+            No prerequisites
+          </label>
+          <label className="label flex-row items-center gap-2">
+            <input type="checkbox" checked={filters.noCorequisites} onChange={(event) => setFilters({ ...filters, noCorequisites: event.target.checked })} />
+            No corequisites
+          </label>
           <div className="label md:col-span-2">
             NUpath (every selected area)
             <div className="flex flex-wrap gap-1">

@@ -256,9 +256,9 @@ describe("search and schedules", () => {
         [section({ crn: "12345", subject: "CS", number: "3000", meetings: [{ days: dayMask([1, 3, 4]), start: 600, end: 665, kind: "Class" }] })],
       ),
     );
-    const typo = searchCatalog(index, "algorthms", { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, instruction: "any" }, "relevance");
+    const typo = searchCatalog(index, "algorthms", { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, noPrerequisites: false, noCorequisites: false, instruction: "any" }, "relevance");
     expect(typo.results.map((result) => result.course.number)).toContain("3000");
-    const crn = searchCatalog(index, "12345", { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, instruction: "any" }, "relevance");
+    const crn = searchCatalog(index, "12345", { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, noPrerequisites: false, noCorequisites: false, instruction: "any" }, "relevance");
     expect(crn.crnMatch?.crn).toBe("12345");
   });
 

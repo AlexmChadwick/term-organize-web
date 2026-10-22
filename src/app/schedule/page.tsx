@@ -48,7 +48,7 @@ export default function SchedulePage() {
 
   const hits = useMemo(() => {
     if (!index || query.trim().length < 2) return [];
-    return runSearch(index, query, { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, instruction: "any" }, "relevance").results.slice(0, 6);
+    return runSearch(index, query, { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, noPrerequisites: false, noCorequisites: false, instruction: "any" }, "relevance").results.slice(0, 6);
   }, [index, query]);
 
   const selected = useMemo(() => {
