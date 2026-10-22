@@ -1,5 +1,5 @@
 /**
- * Degree-requirements audit: each course counts once, toward the matching that meets the most.
+ * Degree-requirements audit. A course number counts once unless the entries are distinct manual sections.
  *
  * Copyright (C) 2026 Term Organize contributors.
  * SPDX-License-Identifier: AGPL-3.0-only
@@ -76,10 +76,16 @@ export interface CourseUse {
   satisfies?: CourseKey;
   instance: number;
   id: string;
+  crn?: string | null;
 }
 
 export function courseUseIsCompleted(use: CourseUse): boolean {
   return use.semester == null;
+}
+
+/** Course code shown for a row. A later copy of the same number gets “ (2)”, “ (3)”, … */
+export function courseUseName(use: Pick<CourseUse, "key" | "instance">): string {
+  return use.instance === 0 ? keyId(use.key) : `${keyId(use.key)} (${use.instance + 1})`;
 }
 
 export function countsAsLabel(use: CourseUse): string | null {
@@ -591,24 +597,12 @@ class AuditEngine {
         bySubstitution: false,
         instance: 0,
         id: keyId(key),
+        crn: course.crn ?? null,
       };
-      const earlier = (this.instances.get(keyId(key)) ?? []).map((id) => this.pool.get(id)!).filter(Boolean);
-      const repeated = earlier.find((use) => !courseCountsSeparately(draft.title, draft.credits, use.title, use.credits));
-      if (repeated) {
-        const better = courseUseIsCompleted(repeated) === courseUseIsCompleted(draft)
-          ? draft.credits > repeated.credits
-          : courseUseIsCompleted(draft);
-        if (better) {
-          draft.instance = repeated.instance;
-          draft.id = identityOfCourseUse(draft);
-          this.pool.set(draft.id, draft);
-        }
-        return;
-      }
-      draft.instance = earlier.length;
-      draft.id = identityOfCourseUse(draft);
-      this.pool.set(draft.id, draft);
       const list = this.instances.get(keyId(key)) ?? [];
+      draft.instance = list.length;
+      draft.id = course.id;
+      this.pool.set(draft.id, draft);
       list.push(draft.id);
       this.instances.set(keyId(key), list);
     };
@@ -774,7 +768,9 @@ class AuditEngine {
       if (current?.type !== "kind") continue;
       for (const substitution of this.substitutionsByRule.get(rule.id) ?? []) {
         if (substitution.change.type !== "countCourse") continue;
-        const taken = this.standIn(substitution.change.course);
+        const taken = substitution.change.rowID
+          ? this.rowStandIn(substitution.change.rowID, substitution.change.course)
+          : this.standIn(substitution.change.course);
         if (!taken) {
           this.unmatched.push(substitution);
           continue;
@@ -888,10 +884,8 @@ class AuditEngine {
     }
     const completed = [...counted.values()].filter(courseUseIsCompleted).reduce((sum, use) => sum + Math.max(0, use.credits), 0);
     const planned = [...counted.values()].filter((use) => !courseUseIsCompleted(use)).reduce((sum, use) => sum + Math.max(0, use.credits), 0);
-    const status = hoursStanding(completed, planned, required);
-    let detail = `${creditNumber(completed + planned)} of ${creditNumber(required)} semester hours`;
-    if (planned > 0) detail += `${DOT}${creditNumber(planned)} planned`;
-    return noteItem(sectionID, note, { type: "majorHours", required }, status, detail, "Semester hours in the major");
+    const standing = hoursStatus(completed, planned, required);
+    return noteItem(sectionID, note, { type: "majorHours", required }, standing.status, standing.detail, "Semester hours in the major");
   }
 
   private coopCheck(sectionID: string, note: string): NoteCheck {
@@ -928,6 +922,10 @@ class AuditEngine {
   }
 
   private nupaths(use: CourseUse): Set<NuPathInfo> | null {
+    if (use.crn) {
+      const specific = this.attributes.nupaths.get(`${keyId(use.key)}#${use.crn}`);
+      if (specific) return nuPathSet(specific);
+    }
     const own = this.attributes.nupaths.get(keyId(use.key));
     if (own) return nuPathSet(own);
     if (isCoopCourse(use)) return new Set();
@@ -982,7 +980,7 @@ class AuditEngine {
         else if (chosen.length === 0) detail = requirement.count === 1 ? "No course in the plan has it" : `Needs ${requirement.count} courses`;
         else detail = found;
       }
-      items.push({ id: requirement.path.code, title: nupathTitle(requirement), status, detail, courses: chosen.map((use) => use.id) });
+      items.push({ id: requirement.path.code, title: nupathTitle(requirement), status, detail, courses: chosen.map((use) => courseUseName(use)) });
     }
     const met = items.filter((item) => item.status != null && statusIsSatisfied(item.status));
     const open = items.filter((item) => item.status == null || !statusIsSatisfied(item.status));
@@ -1247,6 +1245,14 @@ class AuditEngine {
     const list = this.used.get(ruleID) ?? [];
     list.push(placed);
     this.used.set(ruleID, list);
+  }
+
+  /** The named plan row, when it is still available and is that course. A sibling row is not a substitute. */
+  private rowStandIn(rowID: string, course: CourseKey): string | null {
+    if (!this.available.has(rowID)) return null;
+    const use = this.pool.get(rowID);
+    if (!use || !sameKey(use.key, course)) return null;
+    return rowID;
   }
 
   private standIn(required: CourseKey, claimed: ReadonlySet<string> = new Set()): string | null {
@@ -1570,10 +1576,6 @@ class AuditEngine {
   }
 }
 
-function identityOfCourseUse(use: CourseUse): string {
-  return use.instance === 0 ? keyId(use.key) : `${keyId(use.key)} (${use.instance + 1})`;
-}
-
 function pushMap<T>(map: Map<string, T[]>, key: string, value: T): void {
   const list = map.get(key) ?? [];
   list.push(value);
@@ -1600,8 +1602,12 @@ function hoursStanding(completed: number, planned: number, required: number): Au
   return "missing";
 }
 
-function hoursStatus(completed: number, planned: number, required: number): { status: AuditStatus; detail: string } {
-  let detail = `${creditNumber(completed + planned)} of ${creditNumber(required)} semester hours`;
+/**
+ * How a semester-hour minimum stands, for the university minimum, the program total, and
+ * hours in the major. The first number is `completed` alone. It is not `completed + planned`.
+ */
+export function hoursStatus(completed: number, planned: number, required: number): { status: AuditStatus; detail: string } {
+  let detail = `${creditNumber(completed)} of ${creditNumber(required)} semester hours`;
   if (planned > 0) detail += `${DOT}${creditNumber(planned)} planned`;
   return { status: hoursStanding(completed, planned, required), detail };
 }

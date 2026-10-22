@@ -1,7 +1,21 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { CatalogIndex } from "./catalog-index";
 import { loadBundledCatalog } from "./catalog-store";
-import { Day, emptySearchFilters, keyId, sectionKey, sectionMatchesFilters, type SearchFilters } from "./models";
+import {
+  Day,
+  courseMatchesFilters,
+  emptySearchFilters,
+  keyId,
+  reqCourse,
+  requisiteIsNone,
+  searchFilterCount,
+  sectionKey,
+  sectionMatchesFilters,
+  type Course,
+  type CourseSection,
+  type SearchFilters,
+  type TermCatalog,
+} from "./models";
 import { searchCatalog } from "./search";
 
 let index: CatalogIndex;
@@ -73,4 +87,115 @@ describe("SearchEngineTests", () => {
       expect.soft(index.sectionsOf(sectionKey(result.course)).some((section) => sectionMatchesFilters(section, filters))).toBe(true);
     }
   });
+
+  it("noRequisiteFiltersKeepLoadedEmptyCoursesOnly", () => {
+    const filters = { ...emptySearchFilters(), noPrerequisites: true, noCorequisites: true };
+    expect(searchFilterCount(filters)).toBe(2);
+    expect(searchFilterCount(emptySearchFilters())).toBe(0);
+    const results = searchCatalog(index, "", filters, "courseNumber").results;
+    expect(results.length).toBeGreaterThan(0);
+    for (const result of results) {
+      expect(requisiteIsNone(result.course, "prereqs")).toBe(true);
+      expect(requisiteIsNone(result.course, "coreqs")).toBe(true);
+    }
+    const algorithms = index.course({ subject: "CS", number: "3000" });
+    expect(algorithms?.detailsLoaded).toBe(true);
+    expect(algorithms?.prereqs).toBeTruthy();
+    expect(results.some((result) => result.course.subject === "CS" && result.course.number === "3000")).toBe(false);
+
+    const none = listed({ subject: "CS", number: "1101", title: "None" });
+    const hasPrereq = listed({ subject: "CS", number: "3000", title: "Needs one", prereqs: reqCourse({ subject: "CS", number: "2500" }) });
+    const hasCoreq = listed({ subject: "CS", number: "3001", title: "Needs a lab", coreqs: reqCourse({ subject: "CS", number: "3000" }) });
+    const unknown = listed({ subject: "CS", number: "1990", title: "Not loaded", detailsLoaded: false });
+    const unknownNull = listed({ subject: "CS", number: "1991", title: "Null before load", detailsLoaded: false, prereqs: null, coreqs: null });
+    expect(requisiteIsNone(none, "prereqs") && requisiteIsNone(none, "coreqs")).toBe(true);
+    expect(requisiteIsNone(unknown, "prereqs")).toBe(false);
+    expect(requisiteIsNone(unknownNull, "prereqs")).toBe(false);
+    const noPrereq = { ...emptySearchFilters(), noPrerequisites: true };
+    const noCoreq = { ...emptySearchFilters(), noCorequisites: true };
+    expect(courseMatchesFilters(none, filters)).toBe(true);
+    expect(courseMatchesFilters(hasPrereq, noPrereq)).toBe(false);
+    expect(courseMatchesFilters(hasPrereq, noCoreq)).toBe(true);
+    expect(courseMatchesFilters(hasCoreq, noCoreq)).toBe(false);
+    expect(courseMatchesFilters(unknown, filters)).toBe(false);
+    expect(courseMatchesFilters(unknownNull, filters)).toBe(false);
+
+    const tiny = CatalogIndex.build(tinyCatalog([none, hasPrereq, hasCoreq, unknown, unknownNull]));
+    const found = searchCatalog(tiny, "", filters, "courseNumber").results.map((result) => result.course.number);
+    expect(found).toEqual(["1101"]);
+  });
+
+  it("levelBandSplitsAt5000AndCombinesWithRequisiteFilters", () => {
+    const under = listed({ subject: "CS", number: "4999", title: "Undergrad edge" });
+    const grad = listed({ subject: "CS", number: "5000", title: "Grad edge" });
+    const underNeeds = listed({ subject: "CS", number: "2500", title: "Fundies", prereqs: reqCourse({ subject: "CS", number: "1800" }) });
+    const gradOpen = listed({ subject: "CS", number: "5100", title: "Open grad" });
+    expect(courseMatchesFilters(under, { ...emptySearchFilters(), levelBand: "undergrad" })).toBe(true);
+    expect(courseMatchesFilters(under, { ...emptySearchFilters(), levelBand: "grad" })).toBe(false);
+    expect(courseMatchesFilters(grad, { ...emptySearchFilters(), levelBand: "grad" })).toBe(true);
+    expect(courseMatchesFilters(grad, { ...emptySearchFilters(), levelBand: "undergrad" })).toBe(false);
+    expect(courseMatchesFilters(grad, emptySearchFilters())).toBe(true);
+    expect(searchFilterCount({ ...emptySearchFilters(), levelBand: "grad" })).toBe(1);
+    expect(searchFilterCount(emptySearchFilters())).toBe(0);
+
+    const combined = { ...emptySearchFilters(), levelBand: "undergrad" as const, noPrerequisites: true, noCorequisites: true };
+    expect(searchFilterCount(combined)).toBe(3);
+    expect(courseMatchesFilters(under, combined)).toBe(true);
+    expect(courseMatchesFilters(underNeeds, combined)).toBe(false);
+    expect(courseMatchesFilters(gradOpen, combined)).toBe(false);
+    const tiny = CatalogIndex.build(tinyCatalog([under, grad, underNeeds, gradOpen]));
+    const numbers = searchCatalog(tiny, "", combined, "courseNumber").results.map((result) => result.course.number);
+    expect(numbers).toEqual(["4999"]);
+    const gradOnly = searchCatalog(tiny, "cs", { ...emptySearchFilters(), levelBand: "grad" }, "courseNumber").results.map((result) => result.course.number);
+    expect(gradOnly).toEqual(["5000", "5100"]);
+  });
 });
+
+function listed(partial: Partial<Course> & Pick<Course, "subject" | "number" | "title">): Course {
+  return {
+    description: "",
+    minCredits: 4,
+    maxCredits: 4,
+    attributes: [],
+    postreqs: [],
+    specialTopics: false,
+    detailsLoaded: true,
+    prereqs: null,
+    coreqs: null,
+    ...partial,
+  };
+}
+
+function tinyCatalog(courses: Course[]): TermCatalog {
+  const sections: CourseSection[] = courses.map((course, offset) => ({
+    crn: String(10000 + offset),
+    subject: course.subject,
+    number: course.number,
+    title: course.title,
+    sectionNumber: "01",
+    partOfTerm: "1",
+    seatCapacity: 20,
+    seatsRemaining: 5,
+    enrollment: 15,
+    waitlistCapacity: 0,
+    waitlistCount: 0,
+    waitlistRemaining: 0,
+    classType: "Lecture",
+    honors: false,
+    campus: "Boston",
+    meetings: [],
+    crossListCRNs: [],
+    attributes: [],
+  }));
+  return {
+    version: 1,
+    term: { code: "202710", bannerDescription: "Fall 2026 Semester" },
+    generatedAt: 0,
+    sectionsUpdatedAt: 0,
+    courses,
+    sections,
+    subjects: [{ code: "CS", name: "Computer Science" }],
+    attributes: [],
+    campuses: [],
+  };
+}

@@ -26,6 +26,8 @@ export interface MoveOption {
   reasons: string[];
   addsSemester: boolean;
   movedAway: CourseKey[];
+  /** Parallel to `movedAway`. A CRN names the pinned entry to take out of the schedule. */
+  movedAwayCRNs?: (string | null)[];
   movedIn: CourseKey[];
   suggestion: ReorderSuggestion;
   appliedText: string;
@@ -62,7 +64,9 @@ function listKeys(keys: readonly CourseKey[]): string {
 }
 
 function optionFrom(suggestion: ReorderSuggestion, originID: string): MoveOption {
-  const movedAway = suggestion.moves.filter((move) => move.from === originID).map((move) => move.course);
+  const away = suggestion.moves.filter((move) => move.from === originID);
+  const movedAway = away.map((move) => move.course);
+  const movedAwayCRNs = away.map((move) => move.crn ?? null);
   const movedIn = suggestion.moves.filter((move) => move.to === originID).map((move) => move.course);
   const parts: string[] = [];
   if (movedAway.length) parts.push(`${listKeys(movedAway)} ${movedAway.length === 1 ? "comes" : "come"} out of this schedule.`);
@@ -75,6 +79,7 @@ function optionFrom(suggestion: ReorderSuggestion, originID: string): MoveOption
     reasons: suggestion.reasons,
     addsSemester: suggestion.addsSemester != null,
     movedAway,
+    movedAwayCRNs,
     movedIn,
     suggestion,
     appliedText: suggestion.title.startsWith("Move ") ? `Moved ${suggestion.title.slice("Move ".length)}` : "Updated your degree plan",

@@ -9,8 +9,9 @@
  */
 
 import { bannerCodeForSeason } from "@/lib/degree-format";
-import { creditNumber, keyId, sameKey, termApproximateWindow, type CourseKey } from "@/lib/models";
+import { creditNumber, keyId, termApproximateWindow, type CourseKey } from "@/lib/models";
 import { PLAN_SEASON_EXPORT, termCredits, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm } from "@/lib/requirements";
+import { pushCreditsToSchedule } from "@/lib/variable-credits";
 import { emptyPlanFilters, newId, nextColorIndex, type SchedulePlan } from "@/lib/user";
 
 /** Appends a course to a semester. No-op when that semester is gone. */
@@ -77,22 +78,21 @@ export interface SemesterSchedule {
  * when it creates a schedule, the way `UserDataStore.scheduleForDegreePlan` does.
  */
 export function scheduleForDegreePlan(plans: SchedulePlan[], semester: DegreePlanTerm, termCode: string): SemesterSchedule | null {
-  const seen = new Set<string>();
-  const keys: CourseKey[] = [];
+  const entries: { key: CourseKey; crn: string | null; credits: number; creditLow?: number | null; creditHigh?: number | null }[] = [];
   for (const course of semester.courses) {
     if (!course.key) continue;
-    const id = keyId(course.key);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    keys.push(course.key);
+    entries.push({ key: course.key, crn: course.crn ?? null, credits: course.credits, creditLow: course.creditLow, creditHigh: course.creditHigh });
   }
-  if (keys.length === 0) return null;
-  const wanted = new Set(keys.map((key) => keyId(key)));
-  const existing = plansInTerm(plans, termCode).find((plan) => sameCourseSet(plan, wanted));
-  if (existing) return { plan: existing, isNew: false, courseCount: keys.length };
+  if (entries.length === 0) return null;
+  const wanted = entries.map((entry) => (entry.crn ? `${keyId(entry.key)}#${entry.crn}` : keyId(entry.key))).sort();
+  const existing = plansInTerm(plans, termCode).find((plan) => sameCourseMultiset(plan, wanted));
+  if (existing) {
+    existing.courses = pushCreditsToSchedule(semester.courses, existing.courses);
+    return { plan: existing, isNew: false, courseCount: entries.length };
+  }
   const schedule = createSchedulePlan(plans, scheduleName(semester, plansInTerm(plans, termCode).map((plan) => plan.name)), termCode);
-  for (const key of keys) addScheduleCourse(schedule, key);
-  return { plan: schedule, isNew: true, courseCount: keys.length };
+  for (const entry of entries) addScheduleCourse(schedule, entry.key, entry.crn, entry);
+  return { plan: schedule, isNew: true, courseCount: entries.length };
 }
 
 function plansInTerm(plans: readonly SchedulePlan[], termCode: string): SchedulePlan[] {
@@ -101,11 +101,10 @@ function plansInTerm(plans: readonly SchedulePlan[], termCode: string): Schedule
     .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.updatedAt - a.updatedAt);
 }
 
-function sameCourseSet(plan: SchedulePlan, wanted: ReadonlySet<string>): boolean {
-  const have = new Set(plan.courses.map((course) => keyId(course.key)));
-  if (have.size !== wanted.size) return false;
-  for (const id of wanted) if (!have.has(id)) return false;
-  return true;
+function sameCourseMultiset(plan: SchedulePlan, wanted: readonly string[]): boolean {
+  const have = plan.courses.map((course) => (course.pinnedCRN ? `${keyId(course.key)}#${course.pinnedCRN}` : keyId(course.key))).sort();
+  if (have.length !== wanted.length) return false;
+  return have.every((id, index) => id === wanted[index]);
 }
 
 function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: string): SchedulePlan {
@@ -126,9 +125,22 @@ function createSchedulePlan(plans: SchedulePlan[], name: string, termCode: strin
   return plan;
 }
 
-function addScheduleCourse(plan: SchedulePlan, key: CourseKey): void {
-  if (plan.courses.some((course) => sameKey(course.key, key))) return;
-  plan.courses.push({ key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(plan) });
+/** Copies one degree-plan row. A repeated course number stays a second row, and a missing CRN stays missing. */
+function addScheduleCourse(
+  plan: SchedulePlan,
+  key: CourseKey,
+  pinnedCRN?: string | null,
+  chosen?: { credits: number; creditLow?: number | null; creditHigh?: number | null },
+): void {
+  plan.courses.push({
+    key,
+    isRequired: true,
+    excludedCRNs: [],
+    colorIndex: nextColorIndex(plan),
+    ...(pinnedCRN ? { pinnedCRN } : {}),
+    ...(chosen ? { credits: chosen.credits, creditLow: chosen.creditLow, creditHigh: chosen.creditHigh } : {}),
+  });
+  if (pinnedCRN && !plan.selectedCRNs.includes(pinnedCRN)) plan.selectedCRNs.push(pinnedCRN);
   plan.updatedAt = Date.now();
 }
 

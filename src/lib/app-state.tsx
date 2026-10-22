@@ -1,6 +1,7 @@
 "use client";
 
 import { bundledTermCodes, bundledTermOptions, initialTermCode, mergeTermOptions, newestBundledTermCode, type TermOption } from "@/lib/bundled-terms";
+import { refreshCreditsFromCatalog } from "@/lib/credit-sync";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
 import type { Course, CourseKey, CourseSection, Term, TermCatalog } from "@/lib/models";
@@ -20,6 +21,7 @@ import {
   type UserData,
   type WatchItem,
 } from "@/lib/user";
+import { canPlacePlanCourse, mergeRefreshedSections } from "@/lib/schedule/pins";
 import { syncClosedAlerts } from "@/lib/push-client";
 import { compareWatchlist } from "@/lib/watchlist";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -82,6 +84,7 @@ function makePlan(termCode: string, name = "My schedule"): SchedulePlan {
     isPrimary: true,
     createdAt: now,
     updatedAt: now,
+    manualPinsMigrated: true,
   };
 }
 
@@ -223,6 +226,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [termCode, ready]);
 
   useEffect(() => {
+    if (!ready || !index || index.catalog.term.code !== termCode) return;
+    setUser((prev) => {
+      const next = refreshCreditsFromCatalog(prev, termCode, (key) => index.course(key));
+      return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+    });
+  }, [ready, index, termCode, setUser]);
+
+  useEffect(() => {
     let cancelled = false;
     fetch("/api/banner/terms")
       .then((res) => res.json())
@@ -313,7 +324,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           target = makePlan(termCode);
           plans = keepOnePrimaryPlan([...plans, target], termCode, target.id);
         }
-        if (target.courses.some((course) => sameKey(course.key, key))) return { ...prev, plans };
+        if (!canPlacePlanCourse(target.courses, key, null)) return { ...prev, plans };
         const next: SchedulePlan = {
           ...target,
           updatedAt: Date.now(),
@@ -392,12 +403,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [user.watchlist, termCode],
   );
 
+  const userRef = useRef(user);
+  userRef.current = user;
+
   const applyLive = useCallback((key: CourseKey, patch: Partial<Course>, sections: CourseSection[]) => {
     setIndex((prev) => {
       if (!prev) return prev;
+      const pins = userRef.current.plans.flatMap((plan) => {
+        if (plan.termCode !== prev.catalog.term.code) return [];
+        const pinned = plan.courses.flatMap((course) => (course.pinnedCRN && sameKey(course.key, key) ? [course.pinnedCRN] : []));
+        const selected = plan.selectedCRNs.filter((crn) => {
+          const section = prev.sectionByCRN(crn);
+          return section != null && sameKey({ subject: section.subject, number: section.number }, key);
+        });
+        return [...pinned, ...selected];
+      });
+      const merged = mergeRefreshedSections(prev.sectionsOf(key), sections, pins);
       const existing = prev.course(key);
       const course = existing ? { ...existing, ...patch, postreqs: patch.postreqs ?? existing.postreqs } : null;
-      return prev.replaceCourse(key, course, sections);
+      return prev.replaceCourse(key, course, merged);
     });
   }, []);
 

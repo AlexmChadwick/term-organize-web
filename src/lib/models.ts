@@ -380,6 +380,8 @@ export interface Course {
   description: string;
   minCredits: number;
   maxCredits: number;
+  /** Banner `creditHours`, the default when the course has a credit range. */
+  defaultCredits?: number | null;
   attributes: string[];
   prereqs?: Requisite | null;
   coreqs?: Requisite | null;
@@ -542,6 +544,13 @@ export interface CourseSection {
   description?: string | null;
   prereqs?: Requisite | null;
   coreqs?: Requisite | null;
+  /** Banner credit range for this section. Equal low and high means fixed credit. */
+  creditLow?: number | null;
+  creditHigh?: number | null;
+  /** Banner `creditHours` default for this section. */
+  creditHours?: number | null;
+  /** Loaded restriction lists. Null or omitted means not loaded yet. */
+  restrictions?: import("./restrictions").SectionRestriction[] | null;
 }
 
 export function sectionKey(s: Pick<CourseSection, "subject" | "number">): CourseKey {
@@ -836,6 +845,8 @@ export function distinctCourseColorIndexes(keys: readonly CourseKey[]): Map<stri
 
 export type SearchSort = "relevance" | "courseNumber" | "title" | "openSeats";
 export type InstructionFilter = "any" | "inPerson" | "online";
+/** Undergrad is a course number below 5000. Grad is 5000 and up. */
+export type LevelBand = "all" | "undergrad" | "grad";
 
 export interface SearchFilters {
   subjects: string[];
@@ -847,6 +858,12 @@ export interface SearchFilters {
   classTypes: string[];
   honorsOnly: boolean;
   openSeatsOnly: boolean;
+  /** Keep courses Banner has loaded and reported with no prerequisites. Unloaded courses stay out. */
+  noPrerequisites: boolean;
+  /** Keep courses Banner has loaded and reported with no corequisites. Unloaded courses stay out. */
+  noCorequisites: boolean;
+  /** All, undergrad (below 5000), or grad (5000 and up). Omitted means all. */
+  levelBand?: LevelBand;
   instruction: InstructionFilter;
   allowedDays?: DaySet | null;
   startsAfter?: number | null;
@@ -862,6 +879,9 @@ export function emptySearchFilters(): SearchFilters {
     classTypes: [],
     honorsOnly: false,
     openSeatsOnly: false,
+    noPrerequisites: false,
+    noCorequisites: false,
+    levelBand: "all",
     instruction: "any",
   };
 }
@@ -876,6 +896,9 @@ export function searchFilterCount(f: SearchFilters): number {
   if (f.classTypes.length) n++;
   if (f.honorsOnly) n++;
   if (f.openSeatsOnly) n++;
+  if (f.noPrerequisites) n++;
+  if (f.noCorequisites) n++;
+  if (f.levelBand && f.levelBand !== "all") n++;
   if (f.instruction !== "any") n++;
   if (f.allowedDays != null) n++;
   if (f.startsAfter != null || f.endsBefore != null) n++;
@@ -907,7 +930,28 @@ export function courseMatchesFilters(course: Course, f: SearchFilters): boolean 
   }
   if (f.minCredits != null && course.maxCredits < f.minCredits) return false;
   if (f.maxCredits != null && course.minCredits > f.maxCredits) return false;
+  if (f.noPrerequisites && !requisiteIsNone(course, "prereqs")) return false;
+  if (f.noCorequisites && !requisiteIsNone(course, "coreqs")) return false;
+  if (f.levelBand === "undergrad" || f.levelBand === "grad") {
+    const band = numericValue(courseKeyOf(course)) >= 5000 ? "grad" : "undergrad";
+    if (band !== f.levelBand) return false;
+  }
   return true;
+}
+
+/**
+ * True when Banner has been read and the course has no requisite of this kind.
+ *
+ * `detailsLoaded` is what separates none from unknown. A section sync leaves
+ * `detailsLoaded` false and does not write `prereqs` or `coreqs` (or writes null
+ * on a section before the requisite pages are fetched). That is unknown, and a
+ * null field on an unloaded course is not "none". After the requisite pages load,
+ * `detailsLoaded` is true and the field is null for an empty table or for
+ * "No prerequisite information available.", which is none. A requisite tree means
+ * the course has that requirement.
+ */
+export function requisiteIsNone(course: Course, kind: "prereqs" | "coreqs"): boolean {
+  return course.detailsLoaded && course[kind] == null;
 }
 
 export function sectionMatchesFilters(s: CourseSection, f: SearchFilters): boolean {

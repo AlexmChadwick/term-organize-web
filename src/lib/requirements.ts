@@ -255,7 +255,7 @@ function trimNumber(n: number): string {
 }
 
 export type SubstitutionChange =
-  | { type: "countCourse"; course: CourseKey }
+  | { type: "countCourse"; course: CourseKey; /** Degree-plan row. Absent on older substitutions, which take the first free row. */ rowID?: string | null }
   | { type: "replace"; replacement: RequirementReplacement }
   | { type: "waive" };
 
@@ -354,6 +354,11 @@ export interface DegreePlanCourse {
   label: string;
   title: string;
   credits: number;
+  /** Banner range when this row is variable credit. Equal or missing values are fixed. */
+  creditLow?: number | null;
+  creditHigh?: number | null;
+  /** Set when the student picked a section. Two entries may share a course number only when these differ. */
+  crn?: string | null;
 }
 
 export interface DegreePlanTerm {

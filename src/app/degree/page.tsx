@@ -1,16 +1,20 @@
 "use client";
 
 import { courseHref } from "@/components/bits";
+import { CreditStepper } from "@/components/credit-stepper";
+import { setDegreeRowCredits } from "@/lib/credit-sync";
+import { courseCpsNote } from "@/lib/restrictions";
+import { defaultChosenCredits, isVariableCredit, rowIsVariable } from "@/lib/variable-credits";
 import type { CatalogIndex } from "@/lib/catalog-index";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, Select, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
-import { degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
+import { courseUseName, degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide, programURL, programsFromIndex, universitywideLink } from "@/lib/degree/catalog-parser";
 import { courseAttributes } from "@/lib/degree/nupath";
 import { declareEquivalence, planCourseKeys, unorderedPairId, type DegreeEquivalencePrompt } from "@/lib/degree/suggestions";
 import { convertRenumbering, coursesToLookUpForRenumbering, likelyRenumberings, type LikelyRenumbering } from "@/lib/degree/substitutions";
-import { duplicateKeys, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
+import { courseCopyLabel, duplicateAddNote, duplicateAddPlace, duplicateKeys, duplicatePlanNote, newDegreePlanDraft, planCourseRows, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
 import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
@@ -46,7 +50,7 @@ export default function DegreePage() {
     const draft = newDegreePlanDraft("My degree plan", null, user.plans, (term, key) => {
       if (!index || index.catalog.term.code !== term) return null;
       const course = index.course(key);
-      return course ? { title: course.title, credits: course.maxCredits } : null;
+      return course ? catalogChoice(course) : null;
     });
     draft.isPrimary = true;
     updateUser((prev) => ({ ...prev, degreePlans: keepOnePrimaryDegree([...prev.degreePlans, draft], draft.id) }));
@@ -207,15 +211,17 @@ export default function DegreePage() {
             const draft = newDegreePlanDraft(plan.name, plan, user.plans, (term, key) => {
               if (!index || index.catalog.term.code !== term) return null;
               const course = index.course(key);
-              return course ? { title: course.title, credits: course.maxCredits } : null;
+              return course ? catalogChoice(course) : null;
             });
             save({ ...plan, terms: draft.terms, updatedAt: Date.now() });
             setNotice("Added courses from your primary schedules into matching semesters.");
           }}
-          lookupPrereq={(key, termIndex) => prerequisiteStatus(key, termIndex, plan, index, core.requisite, core.equivalences)}
+          lookupPrereq={(key, termIndex, crn) => prerequisiteStatus(key, termIndex, plan, index, core.requisite, core.equivalences, crn)}
           index={index}
           prompts={prompts?.forPlanCourses ?? []}
           retiredNote={(key) => core.retiredNote(key) ?? extra.retiredNote(key)}
+          cpsNote={(key) => courseCpsNote(index?.sectionsOf(key) ?? [])}
+          onCredits={(courseId, credits) => updateUser((prev) => setDegreeRowCredits(prev, plan.id, courseId, credits))}
           onConfirmEquivalence={confirmEquivalence}
           onDismissEquivalence={(prompt) => {
             core.dismiss(prompt.course, prompt.countsAs);
@@ -381,7 +387,7 @@ export default function DegreePage() {
                       <strong>{rule.rule.label.replace(/:$/, "")}</strong>
                       <span className={rule.status === "complete" || rule.status === "waived" ? "text-good" : rule.status === "missing" ? "text-bad" : "text-warn"}>{rule.status}</span>
                     </div>
-                    {rule.used.length ? <p className="text-muted">{rule.used.map((use) => keyId(use.key)).join(", ")}</p> : null}
+                    {rule.used.length ? <p className="text-muted">{rule.used.map((use) => courseUseName(use)).join(", ")}</p> : null}
                   </li>
                 ))}
               </ul>
@@ -430,6 +436,8 @@ function PlanEditor({
   onMove,
   prompts,
   retiredNote,
+  cpsNote,
+  onCredits,
   onConfirmEquivalence,
   onDismissEquivalence,
 }: {
@@ -441,25 +449,34 @@ function PlanEditor({
   onExportText: () => void;
   onExportPDF: () => void;
   onAutofill: () => void;
-  lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number) => { kind: string; text?: string };
+  lookupPrereq: (key: ReturnType<typeof parseCourseKey> & object, termIndex: number, crn?: string | null) => { kind: string; text?: string };
   index: CatalogIndex | null;
   onMove: (option: MoveOption) => void;
   prompts: DegreeEquivalencePrompt[];
   retiredNote: (key: CourseKey) => string | null;
+  cpsNote: (key: CourseKey) => string | null;
+  onCredits: (courseId: string, credits: number) => void;
   onConfirmEquivalence: (prompt: DegreeEquivalencePrompt) => void;
   onDismissEquivalence: (prompt: DegreeEquivalencePrompt) => void;
 }) {
   const [draft, setDraft] = useState("CS 3000");
+  const [addNote, setAddNote] = useState<{ id: string; text: string } | null>(null);
   const total = completedCredits(plan) + plannedCredits(plan);
+  const addMessage = addNote && planCourseRows(plan).filter((course) => course.key && keyId(course.key) === addNote.id).length > 1 ? addNote.text : null;
 
   function addCourse(where: "completed" | number) {
     const key = parseCourseKey(draft);
+    const place = key ? duplicateAddPlace(plan, key, where) : null;
+    setAddNote(key && place ? { id: keyId(key), text: duplicateAddNote(place) } : null);
+    const listed = key && index ? index.course(key) : null;
+    const choice = listed ? catalogChoice(listed) : null;
     const course: DegreePlanCourse = {
       id: newId(),
       key,
       label: key ? keyId(key) : draft.trim(),
       title: key ? keyId(key) : draft.trim(),
-      credits: 4,
+      credits: choice?.credits ?? 4,
+      ...(choice?.creditLow != null && choice.creditHigh != null ? { creditLow: choice.creditLow, creditHigh: choice.creditHigh } : {}),
     };
     if (where === "completed") onChange({ ...plan, completed: [...plan.completed, course] });
     else onChange({ ...plan, terms: plan.terms.map((term, index) => (index === where ? { ...term, courses: [...term.courses, course] } : term)) });
@@ -480,7 +497,7 @@ function PlanEditor({
       <p className="text-sm">
         {completedCredits(plan)} completed · {plannedCredits(plan)} planned · {total} total credits
       </p>
-      {duplicates.size ? <p className="text-sm text-bad">Repeated courses: {[...duplicates].join(", ")}. Topics with different titles can count separately.</p> : null}
+      {duplicates.size > 0 ? <p className="text-sm text-muted">{duplicatePlanNote(duplicates.size)}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" type="button" onClick={onExportPDF}>Export PDF</Button>
         <Button variant="ghost" type="button" onClick={onExportText}>Export text</Button>
@@ -503,6 +520,7 @@ function PlanEditor({
           Add semester
         </Button>
       </div>
+      {addMessage ? <p className="text-sm text-muted">{addMessage}</p> : null}
       {prompts.length ? (
         <div className="grid gap-2">
           <h3 className="font-semibold">Course equivalences</h3>
@@ -513,7 +531,7 @@ function PlanEditor({
       ) : null}
       <div>
         <h3 className="font-semibold">Completed</h3>
-        <CourseList courses={plan.completed} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
+        <CourseList plan={plan} courses={plan.completed} termCode={termCode} retiredNote={retiredNote} cpsNote={cpsNote} onCredits={onCredits} onChange={(courses) => onChange({ ...plan, completed: courses })} />
       </div>
       {plan.terms.map((term, termIndex) => (
         <div key={term.id} className="rounded-2xl border border-line p-3">
@@ -534,11 +552,11 @@ function PlanEditor({
               Remove semester
             </Button>
           </div>
-          <CourseList courses={term.courses} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
+          <CourseList plan={plan} courses={term.courses} termCode={termCode} retiredNote={retiredNote} cpsNote={cpsNote} onCredits={onCredits} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
-              const status = lookupPrereq(course.key, termIndex);
+              const status = lookupPrereq(course.key, termIndex, course.crn);
               if (status.kind !== "missing") return null;
               return (
                 <li key={course.id} className="text-warn">
@@ -557,14 +575,14 @@ function PlanEditor({
 function blockingCourses(
   term: DegreePlanTerm,
   termIndex: number,
-  lookupPrereq: (key: CourseKey, termIndex: number) => { kind: string },
+  lookupPrereq: (key: CourseKey, termIndex: number, crn?: string | null) => { kind: string },
   index: CatalogIndex | null,
 ): CourseKey[] {
   const seen = new Set<string>();
   const keys: CourseKey[] = [];
   for (const course of term.courses) {
     if (!course.key) continue;
-    const missing = lookupPrereq(course.key, termIndex).kind === "missing";
+    const missing = lookupPrereq(course.key, termIndex, course.crn).kind === "missing";
     const unoffered = index != null && planTermMatches(term, index.catalog.term) && index.sectionsOf(course.key).length === 0;
     if (!missing && !unoffered) continue;
     const id = keyId(course.key);
@@ -575,7 +593,51 @@ function blockingCourses(
   return keys;
 }
 
-function CourseList({ courses, onChange, termCode, retiredNote }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string; retiredNote: (key: CourseKey) => string | null }) {
+function planRows(plan: DegreePlan): { id: string; key: CourseKey; label: string }[] {
+  const raw = [
+    ...plan.completed.flatMap((course) => (course.key ? [{ id: course.id, key: course.key, label: `${course.label} · completed` }] : [])),
+    ...plan.terms.flatMap((term) =>
+      term.courses.flatMap((course) =>
+        course.key ? [{ id: course.id, key: course.key, label: `${course.label} · ${PLAN_SEASON_SHORT[term.season]} ${term.year}` }] : [],
+      ),
+    ),
+  ];
+  const seen = new Map<string, number>();
+  return raw.map((row) => {
+    const count = (seen.get(row.label) ?? 0) + 1;
+    seen.set(row.label, count);
+    return count === 1 ? row : { ...row, label: `${row.label} (${count})` };
+  });
+}
+
+function catalogChoice(course: { title: string; minCredits: number; maxCredits: number; defaultCredits?: number | null }): {
+  title: string;
+  credits: number;
+  creditLow?: number;
+  creditHigh?: number;
+} {
+  const bounds = { low: course.minCredits, high: course.maxCredits, creditHours: course.defaultCredits };
+  if (!isVariableCredit(bounds.low, bounds.high)) return { title: course.title, credits: course.minCredits };
+  return { title: course.title, credits: defaultChosenCredits(bounds), creditLow: bounds.low, creditHigh: bounds.high };
+}
+
+function CourseList({
+  plan,
+  courses,
+  onChange,
+  onCredits,
+  termCode,
+  retiredNote,
+  cpsNote,
+}: {
+  plan: DegreePlan;
+  courses: DegreePlanCourse[];
+  onChange: (courses: DegreePlanCourse[]) => void;
+  onCredits: (courseId: string, credits: number) => void;
+  termCode: string;
+  retiredNote: (key: CourseKey) => string | null;
+  cpsNote: (key: CourseKey) => string | null;
+}) {
   if (!courses.length) return <p className="mt-2 text-sm text-muted">None yet.</p>;
   return (
     <ul className="mt-2 grid gap-2">
@@ -583,14 +645,19 @@ function CourseList({ courses, onChange, termCode, retiredNote }: { courses: Deg
         <li key={course.id} className="flex flex-wrap items-center gap-2 text-sm">
           {course.key ? (
             <Link className="font-semibold underline" href={courseHref(termCode, course.key)}>
-              {course.label}
+              {courseCopyLabel(plan, course)}
             </Link>
           ) : (
             <span className="font-semibold">{course.label}</span>
           )}
           {course.key && retiredNote(course.key) ? <span className="text-muted">{retiredNote(course.key)}</span> : null}
           <TextInput className="max-w-[220px] py-1" value={course.title} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, title: event.target.value } : item)))} />
-          <TextInput className="w-20 py-1" value={String(course.credits)} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, credits: Number(event.target.value) || 0 } : item)))} />
+          {rowIsVariable(course) ? (
+            <CreditStepper credits={course.credits} low={course.creditLow!} high={course.creditHigh!} onChange={(value) => onCredits(course.id, value)} />
+          ) : (
+            <TextInput className="w-20 py-1" value={String(course.credits)} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, credits: Number(event.target.value) || 0 } : item)))} />
+          )}
+          {course.key && cpsNote(course.key) ? <p className="basis-full text-xs text-muted">{cpsNote(course.key)}</p> : null}
           <button type="button" className="text-muted" onClick={() => onChange(courses.filter((item) => item.id !== course.id))}>
             Remove
           </button>
@@ -622,6 +689,8 @@ function SubstitutionForm({
   const [note, setNote] = useState("");
   const [equivFrom, setEquivFrom] = useState("");
   const [equivTo, setEquivTo] = useState("");
+  const rows = planRows(plan);
+  const [rowID, setRowID] = useState(rows[0]?.id ?? "");
 
   return (
     <div className="grid gap-3 rounded-2xl border border-line p-3">
@@ -655,7 +724,18 @@ function SubstitutionForm({
             <option value="replace">Petition (replace the rule)</option>
           </Select>
         </label>
-        {kind !== "waive" ? (
+        {kind === "countCourse" && rows.length ? (
+          <label className="label md:col-span-2">
+            Plan row
+            <Select value={rows.some((row) => row.id === rowID) ? rowID : rows[0]!.id} onChange={(event) => setRowID(event.target.value)}>
+              {rows.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : kind !== "waive" ? (
           <label className="label md:col-span-2">
             Courses
             <TextInput value={courseText} onChange={(event) => setCourseText(event.target.value)} placeholder="CS 2500, CS 2510" />
@@ -676,12 +756,15 @@ function SubstitutionForm({
             const key = parseCourseKey(part.trim());
             return key ? [key] : [];
           });
+          const selected = rows.find((row) => row.id === rowID) ?? rows[0];
           const change =
             kind === "waive"
               ? { type: "waive" as const }
-              : kind === "countCourse"
-                ? { type: "countCourse" as const, course: keys[0] ?? { subject: "CS", number: "0000" } }
-                : { type: "replace" as const, replacement: { courses: keys, count: keys.length || 1, hours: null } };
+              : kind === "countCourse" && selected
+                ? { type: "countCourse" as const, course: selected.key, rowID: selected.id }
+                : kind === "countCourse"
+                  ? { type: "countCourse" as const, course: keys[0] ?? { subject: "CS", number: "0000" } }
+                  : { type: "replace" as const, replacement: { courses: keys, count: keys.length || 1, hours: null } };
           onChange({
             ...plan,
             substitutions: [
@@ -699,7 +782,9 @@ function SubstitutionForm({
         {plan.substitutions.map((item) => (
           <li key={item.id} className="flex justify-between gap-2">
             <span>
-              {item.change.type} · {item.ruleTitle} {item.note ? `· ${item.note}` : ""}
+              {item.change.type} · {item.ruleTitle}
+              {item.change.type === "countCourse" ? ` · ${keyId(item.change.course)}` : ""}
+              {item.note ? ` · ${item.note}` : ""}
             </span>
             <button type="button" className="text-muted" onClick={() => onChange({ ...plan, substitutions: plan.substitutions.filter((entry) => entry.id !== item.id) })}>
               Remove

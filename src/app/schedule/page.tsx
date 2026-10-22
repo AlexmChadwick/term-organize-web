@@ -1,6 +1,10 @@
 "use client";
 
 import { WeekCalendar, blocksFromSections, courseHref, type CalendarBlock } from "@/components/bits";
+import { CreditStepper } from "@/components/credit-stepper";
+import { setScheduleRowCredits } from "@/lib/credit-sync";
+import { courseCpsNote } from "@/lib/restrictions";
+import { defaultChosenCredits, isVariableCredit, rowIsVariable } from "@/lib/variable-credits";
 import { SemesterMoves } from "@/components/semester-moves";
 import { Button, TextArea, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
@@ -8,14 +12,15 @@ import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
 import { sectionsToICS, downloadText } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
-import { DAY_SHORT, courseColorAt, courseColorIndex, creditsLabel, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
+import { DAY_SHORT, courseColorAt, courseColorIndex, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
 import { blockedTimeIsValid, emptyPreferences, schedulePreferencesContext, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
 import { ScheduleSurveyExtras } from "@/components/schedule-survey";
 import { generateOffThread } from "@/lib/schedule/generate-client";
 import { courseInputsFor, ScheduleNoResultsText, type ScheduleGenerationResult, type ScheduleNoResults, type ScheduleSortOption } from "@/lib/schedule";
+import { applyCourseMoves, applyGeneratedCRNs, ensureManualPins, placePlanCourse, removePlanEntry, selectSectionOnPlan } from "@/lib/schedule/pins";
 import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
-import { newId, nextColorIndex } from "@/lib/user";
+import { newId } from "@/lib/user";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 
@@ -47,7 +52,7 @@ export default function SchedulePage() {
 
   const hits = useMemo(() => {
     if (!index || query.trim().length < 2) return [];
-    return runSearch(index, query, { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, instruction: "any" }, "relevance").results.slice(0, 6);
+    return runSearch(index, query, { subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, noPrerequisites: false, noCorequisites: false, instruction: "any" }, "relevance").results.slice(0, 6);
   }, [index, query]);
 
   const selected = useMemo(() => {
@@ -73,26 +78,36 @@ export default function SchedulePage() {
   }
 
   function colorFor(section: CourseSection) {
-    const course = active?.courses.find((item) => item.key.subject === section.subject && item.key.number === section.number);
+    const course =
+      active?.courses.find((item) => item.pinnedCRN === section.crn) ??
+      active?.courses.find((item) => item.key.subject === section.subject && item.key.number === section.number && !item.pinnedCRN) ??
+      active?.courses.find((item) => item.key.subject === section.subject && item.key.number === section.number);
     return course?.colorIndex ?? courseColorIndex(keyId({ subject: section.subject, number: section.number }));
   }
 
-  function add(key: CourseKey) {
+  function add(key: CourseKey, pinnedCRN?: string | null) {
     const target = current();
-    if (target.courses.some((course) => keyId(course.key) === keyId(key))) return;
-    updatePlan(target.id, (item) => ({
-      ...item,
-      courses: [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(item) }],
-    }));
+    const listed = index?.course(key);
+    const chosen =
+      listed && isVariableCredit(listed.minCredits, listed.maxCredits)
+        ? {
+            credits: defaultChosenCredits({ low: listed.minCredits, high: listed.maxCredits, creditHours: listed.defaultCredits }),
+            creditLow: listed.minCredits,
+            creditHigh: listed.maxCredits,
+          }
+        : undefined;
+    updatePlan(target.id, (item) => placePlanCourse(item, key, pinnedCRN, chosen));
     setQuery("");
   }
 
   function run() {
     if (!index || generating) return;
-    const target = current();
+    const target = ensureManualPins(current(), (crn) => index.sectionByCRN(crn));
+    if (target !== current()) updatePlan(target.id, () => target);
     const inputs = courseInputsFor(target.courses, {
       course: (key) => index.course(key) ?? null,
       sectionsFor: (key) => index.sectionsOf(key),
+      sectionByCrn: (crn) => index.sectionByCRN(crn),
     });
     const id = ++generation.current;
     setGenerating(true);
@@ -152,21 +167,9 @@ export default function SchedulePage() {
     }));
     const catalog = index;
     if (!catalog) return;
-    const removed = new Set(option.movedAway.flatMap((key) => catalog.sectionsOf(key).map((section) => section.crn)));
-    const away = new Set(option.movedAway.map((key) => keyId(key)));
-    updatePlan(current().id, (item) => {
-      let courses = item.courses.filter((course) => !away.has(keyId(course.key)));
-      for (const key of option.movedIn) {
-        if (!catalog.sectionsOf(key).length || courses.some((course) => keyId(course.key) === keyId(key))) continue;
-        courses = [...courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex({ ...item, courses }) }];
-      }
-      return {
-        ...item,
-        courses,
-        selectedCRNs: item.selectedCRNs.filter((crn) => !removed.has(crn)),
-        favoriteCombinations: item.favoriteCombinations.filter((combo) => !combo.some((crn) => removed.has(crn))),
-      };
-    });
+    updatePlan(current().id, (item) =>
+      applyCourseMoves(item, option.movedAway, option.movedIn, (key) => catalog.sectionsOf(key), option.movedAwayCRNs),
+    );
     setMessage(option.scheduleEffect ? `${option.appliedText} ${option.scheduleEffect}` : option.appliedText);
     setEmptyHelp(null);
     setResults(null);
@@ -196,6 +199,7 @@ export default function SchedulePage() {
                 isPrimary: true,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
+                manualPinsMigrated: true,
               };
               updateUser((prev) => ({
                 ...prev,
@@ -259,7 +263,7 @@ export default function SchedulePage() {
                 type="button"
                 onClick={() => {
                   const target = current();
-                  for (const key of suggestions[0]!.courses) add(key);
+                  suggestions[0]!.courses.forEach((key, index) => add(key, suggestions[0]!.crns?.[index]));
                   updatePlan(target.id, (item) => item);
                 }}
               >
@@ -272,27 +276,37 @@ export default function SchedulePage() {
             <h2 className="font-semibold">Courses</h2>
             {!active?.courses.length ? <p className="mt-2 text-sm text-muted">Add a course to start a week.</p> : null}
             <ul className="mt-2 grid gap-2">
-              {(active?.courses ?? []).map((course) => {
+              {(active?.courses ?? []).map((course, courseIndex) => {
                 const listed = index.course(course.key);
                 const sections = index.sectionsOf(course.key);
-                const chosen = sections.find((section) => active?.selectedCRNs.includes(section.crn));
+                const chosen = sections.find((section) => section.crn === course.pinnedCRN) ?? sections.find((section) => active?.selectedCRNs.includes(section.crn) && !active.courses.some((entry, index) => index !== courseIndex && entry.pinnedCRN === section.crn));
                 const color = courseColorAt(course.colorIndex);
                 return (
-                  <li key={keyId(course.key)} className="rounded-2xl border border-line p-3" style={{ borderColor: color.stroke }}>
+                  <li key={`${keyId(course.key)}-${course.pinnedCRN ?? courseIndex}`} className="rounded-2xl border border-line p-3" style={{ borderColor: color.stroke }}>
                     <div className="flex items-start justify-between gap-2">
                       <Link className="font-semibold underline" href={courseHref(termCode, course.key)}>
                         {keyId(course.key)}
+                        {course.pinnedCRN ? <span className="text-muted"> · CRN {course.pinnedCRN}</span> : null}
                       </Link>
-                      <button className="text-sm text-muted" type="button" onClick={() => updatePlan(active!.id, (item) => ({ ...item, courses: item.courses.filter((entry) => keyId(entry.key) !== keyId(course.key)), selectedCRNs: item.selectedCRNs.filter((crn) => !sections.some((section) => section.crn === crn)) }))}>
+                      <button className="text-sm text-muted" type="button" onClick={() => updatePlan(active!.id, (item) => removePlanEntry(item, courseIndex, sections))}>
                         Remove
                       </button>
                     </div>
                     <p className="text-sm text-muted">{listed?.title}</p>
+                    {courseCpsNote(sections) ? <p className="text-xs text-muted">{courseCpsNote(sections)}</p> : null}
+                    {rowIsVariable(course) ? (
+                      <CreditStepper
+                        credits={course.credits ?? course.creditLow!}
+                        low={course.creditLow!}
+                        high={course.creditHigh!}
+                        onChange={(value) => updateUser((prev) => setScheduleRowCredits(prev, active!.id, courseIndex, value))}
+                      />
+                    ) : null}
                     <label className="mt-1 flex items-center gap-2 text-sm">
                       <input
                         type="checkbox"
                         checked={course.isRequired}
-                        onChange={(event) => updatePlan(active!.id, (item) => ({ ...item, courses: item.courses.map((entry) => (keyId(entry.key) === keyId(course.key) ? { ...entry, isRequired: event.target.checked } : entry)) }))}
+                        onChange={(event) => updatePlan(active!.id, (item) => ({ ...item, courses: item.courses.map((entry, index) => (index === courseIndex ? { ...entry, isRequired: event.target.checked } : entry)) }))}
                       />
                       Required
                     </label>
@@ -303,10 +317,7 @@ export default function SchedulePage() {
                         value={chosen?.crn ?? ""}
                         onChange={(event) => {
                           const crn = event.target.value;
-                          updatePlan(active!.id, (item) => ({
-                            ...item,
-                            selectedCRNs: [...item.selectedCRNs.filter((id) => !sections.some((section) => section.crn === id)), ...(crn ? [crn] : [])],
-                          }));
+                          updatePlan(active!.id, (item) => selectSectionOnPlan(item, courseIndex, crn, sections));
                         }}
                       >
                         <option value="">Not chosen</option>
@@ -317,7 +328,6 @@ export default function SchedulePage() {
                         ))}
                       </select>
                     </label>
-                    {listed ? <p className="mt-1 text-xs text-muted">{creditsLabel(listed.minCredits, listed.maxCredits)}</p> : null}
                   </li>
                 );
               })}
@@ -520,7 +530,7 @@ export default function SchedulePage() {
                 rank={Math.min(picked, results.schedules.length - 1)}
                 total={results.schedules.length}
                 onPick={setPicked}
-                onUse={(crns) => updatePlan(current().id, (item) => ({ ...item, selectedCRNs: crns }))}
+                onUse={(crns) => updatePlan(current().id, (item) => applyGeneratedCRNs(item, crns, (crn) => index.sectionByCRN(crn)))}
               />
             ) : null}
           </section>

@@ -215,6 +215,8 @@ export interface ScheduleCourseInput {
   /** Whole credits. Omitted means 0, matching the Swift defaults. */
   minCredits?: number;
   maxCredits?: number;
+  /** When set, this entry is that section. Other sections of the course number are not candidates. */
+  pinnedCRN?: string | null;
 }
 
 export function courseInput(
@@ -248,19 +250,35 @@ function roundCreditsUp(value: number | null | undefined): number {
   return Math.ceil(value);
 }
 
-/** One entry per plan course, credits rounded up to whole credits. */
+/**
+ * One entry per plan course, credits rounded up to whole credits.
+ * A pin narrows that entry to its CRN. A pin that is no longer in the catalog
+ * leaves the entry empty so generation stays locked to it and reports it unavailable.
+ */
 export function courseInputsFor(
-  planCourses: readonly { key: CourseKey; isRequired: boolean; excludedCRNs?: Iterable<string> }[],
-  index: Pick<ScheduleCatalogLookup, "course" | "sectionsFor">,
+  planCourses: readonly { key: CourseKey; isRequired: boolean; excludedCRNs?: Iterable<string>; pinnedCRN?: string | null; credits?: number | null }[],
+  index: Pick<ScheduleCatalogLookup, "course" | "sectionsFor"> & {
+    sectionByCrn?: (crn: string) => CourseSection | null | undefined;
+  },
 ): ScheduleCourseInput[] {
   return planCourses.map((planCourse) => {
     const course = index.course(planCourse.key);
-    return courseInput(planCourse.key, index.sectionsFor(planCourse.key), {
+    const all = index.sectionsFor(planCourse.key);
+    const pin = planCourse.pinnedCRN ?? null;
+    const lookedUp = pin ? index.sectionByCrn?.(pin) : null;
+    const pinned = pin
+      ? (all.find((section) => section.crn === pin) ??
+        (lookedUp && sameKey({ subject: lookedUp.subject, number: lookedUp.number }, planCourse.key) ? lookedUp : null))
+      : null;
+    const chosen = typeof planCourse.credits === "number" ? roundCreditsUp(planCourse.credits) : null;
+    const input = courseInput(planCourse.key, pin ? (pinned ? [pinned] : []) : all, {
       isRequired: planCourse.isRequired,
       excludedCRNs: planCourse.excludedCRNs,
-      minCredits: roundCreditsUp(course?.minCredits ?? 0),
-      maxCredits: roundCreditsUp(course?.maxCredits ?? 0),
+      minCredits: chosen ?? roundCreditsUp(course?.minCredits ?? 0),
+      maxCredits: chosen ?? roundCreditsUp(course?.maxCredits ?? 0),
     });
+    input.pinnedCRN = pin;
+    return input;
   });
 }
 
@@ -397,6 +415,8 @@ export interface CourseReport {
   remainingSections: number;
   rejections: Partial<Record<ScheduleFilterReason, number>>;
   isBlocked: boolean;
+  /** Set when a pinned CRN is not in this term's catalog. The row stays locked to it. */
+  unavailableCRN?: string;
 }
 
 export type ConflictReason = "overlap" | "travelTime";
@@ -828,11 +848,27 @@ function run(
 
   const kept: CourseSection[][] = [];
   const reports: CourseReport[] = [];
+  const pinnedElsewhere = new Set(courses.flatMap((course) => (course.pinnedCRN ? [course.pinnedCRN] : [])));
   for (const course of courses) {
+    if (course.pinnedCRN) {
+      const pinned = course.sections.find((section) => section.crn === course.pinnedCRN) ?? null;
+      kept.push(pinned ? [pinned] : []);
+      reports.push({
+        key: course.key,
+        isRequired: course.isRequired,
+        totalSections: pinned ? course.sections.length : 0,
+        remainingSections: pinned ? 1 : 0,
+        rejections: {},
+        isBlocked: pinned == null,
+        ...(pinned ? {} : { unavailableCRN: course.pinnedCRN }),
+      });
+      continue;
+    }
     const remaining: CourseSection[] = [];
     const rejections: Partial<Record<ScheduleFilterReason, number>> = {};
     const excluded = course.excludedCRNs ?? EMPTY_EXCLUSIONS;
     for (const section of course.sections) {
+      if (pinnedElsewhere.has(section.crn)) continue;
       const reasons = rejectionReasons(section, filters, preferences, excluded);
       if (reasons === 0) {
         remaining.push(section);
@@ -1187,6 +1223,8 @@ export class ScheduleBlockerAnalysis {
   requiredCount = 0;
   notOffered: CourseKey[] = [];
   filteredOut: CourseKey[] = [];
+  /** Pinned CRNs that are no longer in the catalog. The row stays locked. */
+  unavailable: { key: CourseKey; crn: string }[] = [];
   options: ScheduleBlockerOption[] = [];
   conflictingPairs: ConflictPair[] = [];
   isIncomplete = false;
@@ -1233,6 +1271,7 @@ export function reviveBlockerAnalysis(raw: ScheduleBlockerAnalysis): ScheduleBlo
   analysis.requiredCount = raw.requiredCount ?? 0;
   analysis.notOffered = raw.notOffered ?? [];
   analysis.filteredOut = raw.filteredOut ?? [];
+  analysis.unavailable = raw.unavailable ?? [];
   analysis.options = raw.options ?? [];
   analysis.conflictingPairs = raw.conflictingPairs ?? [];
   analysis.isIncomplete = !!raw.isIncomplete;
@@ -1268,7 +1307,8 @@ export function analyzeBlockers(
     const report = base.courses[index]!;
     if (!report.isBlocked) continue;
     dead.push(index);
-    if (report.totalSections === 0) analysis.notOffered.push(courses[index]!.key);
+    if (report.unavailableCRN) analysis.unavailable.push({ key: courses[index]!.key, crn: report.unavailableCRN });
+    else if (report.totalSections === 0) analysis.notOffered.push(courses[index]!.key);
     else analysis.filteredOut.push(courses[index]!.key);
   }
   const deadSet = new Set(dead);
@@ -1697,6 +1737,7 @@ class ScheduleSearch {
         const slot = slots[s]!;
         for (let j = 0; j < slot.size; j++) {
           const h = slot.start + j;
+          if (sections[g]!.crn === sections[h]!.crn) continue;
           if (masks[g]!.conflicts(masks[h]!) && meetingsConflict(weekly[g]!, weekly[h]!)) continue;
           if (
             rules.travelMinutes > 0 &&

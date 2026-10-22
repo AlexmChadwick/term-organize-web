@@ -8,8 +8,9 @@
  * JSON is the way to move data between browsers.
  */
 
-import type { CourseKey } from "./models";
+import type { CourseKey, LevelBand } from "./models";
 import { COURSE_PALETTE, keyId, sameKey } from "./models";
+import { migrateDegreeCourse, migratePlanCourse } from "./variable-credits";
 import type { SchedulePreferences } from "./preferences";
 import type { DegreePlan } from "./requirements";
 
@@ -30,6 +31,12 @@ export interface PlanCourse {
   isRequired: boolean;
   excludedCRNs: string[];
   colorIndex: number;
+  /** Manual section choice. Identity is this CRN in the plan's term. */
+  pinnedCRN?: string;
+  /** Chosen credits for a variable-credit course. Each row has its own value. */
+  credits?: number;
+  creditLow?: number | null;
+  creditHigh?: number | null;
 }
 
 export interface SchedulePlan {
@@ -54,6 +61,11 @@ export interface SchedulePlan {
   isPrimary: boolean;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Set once existing selected CRNs have been copied onto `pinnedCRN`.
+   * Generated weeks after that stay unpinned, so a later search can still change them.
+   */
+  manualPinsMigrated?: boolean;
 }
 
 export interface WatchItem {
@@ -83,6 +95,8 @@ export interface AppPreferences {
   /** Minutes between seat checks while the site is open. */
   watchlistIntervalMinutes: number;
   notificationsEnabled: boolean;
+  /** Search level band. Omitted means all courses. */
+  searchLevel?: LevelBand;
 }
 
 export interface UserData {
@@ -184,6 +198,8 @@ export function decodeDegreePlan(raw: unknown): DegreePlan | null {
   if (typeof plan.updatedAt !== "number") plan.updatedAt = Date.now() / 1000;
   if (!Array.isArray(plan.substitutions)) plan.substitutions = [];
   if (!Array.isArray(plan.courseEquivalences)) plan.courseEquivalences = [];
+  plan.completed = plan.completed.map((course) => migrateDegreeCourse(course));
+  plan.terms = plan.terms.map((term) => ({ ...term, courses: term.courses.map((course) => migrateDegreeCourse(course)) }));
   return plan;
 }
 
@@ -198,7 +214,9 @@ export function mergeUserData(raw: unknown): UserData {
   }
   base.saved = arrayOf(o.saved);
   base.recents = arrayOf(o.recents);
-  base.plans = arrayOf(o.plans);
+  base.plans = arrayOf<SchedulePlan>(o.plans).map((plan) =>
+    plan && Array.isArray(plan.courses) ? { ...plan, courses: plan.courses.map((course) => migratePlanCourse(course)) } : plan,
+  );
   base.watchlist = arrayOf(o.watchlist);
   base.searchHistory = arrayOf(o.searchHistory).filter((s) => typeof s === "string");
   base.degreePlans = arrayOf<unknown>(o.degreePlans).flatMap((plan) => {

@@ -110,6 +110,7 @@ export {
   fewestCredits,
   fewestCreditsChoice,
   findMilestone,
+  hoursStatus,
   isCoopCourse,
   isCoopNote,
   isMajorHoursNote,

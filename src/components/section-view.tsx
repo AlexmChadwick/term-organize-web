@@ -3,8 +3,9 @@
 import { SeatText, courseHref } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
-import { nextColorIndex } from "@/lib/user";
+import { pinSectionOnPlan } from "@/lib/schedule/pins";
 import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLocation, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel, weeklyMeetings } from "@/lib/models";
+import { sectionCpsNote } from "@/lib/restrictions";
 import Link from "next/link";
 import { useEffect } from "react";
 
@@ -52,6 +53,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
           {section.honors ? " · Honors" : ""}
           {section.instructionMethod ? ` · ${section.instructionMethod}` : ""}
         </p>
+        {sectionCpsNote(section.restrictions) ? <p className="mt-1 text-sm text-muted">{sectionCpsNote(section.restrictions)}</p> : null}
       </header>
       <section className="card p-5">
         <p className="text-lg">{scheduleSummary(section)}</p>
@@ -70,13 +72,7 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
             type="button"
             onClick={() => {
               const current = plan ?? ensurePlan();
-              updatePlan(current.id, (item) => ({
-                ...item,
-                courses: item.courses.some((course) => course.key.subject === key.subject && course.key.number === key.number)
-                  ? item.courses
-                  : [...item.courses, { key, isRequired: true, excludedCRNs: [], colorIndex: nextColorIndex(item) }],
-                selectedCRNs: [...item.selectedCRNs.filter((id) => index.sectionByCRN(id)?.subject !== key.subject || index.sectionByCRN(id)?.number !== key.number), crn],
-              }));
+              updatePlan(current.id, (item) => pinSectionOnPlan(item, key, crn));
             }}
           >
             {selected ? "On your week" : "Use this section"}

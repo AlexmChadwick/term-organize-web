@@ -112,7 +112,10 @@ export const ScheduleNoResultsText = {
     const noun = option.scheduleCount === 1 && !option.isLowerBound ? "schedule" : "schedules";
     parts.push(option.isLowerBound ? `${count}+ ${noun}` : `${count} ${noun}`);
     for (const key of option.courses) {
-      if (blockers.notOffered.some((offered) => sameKey(offered, key))) {
+      const missing = blockers.unavailable.find((item) => sameKey(item.key, key));
+      if (missing) {
+        parts.push(`CRN ${missing.crn} is unavailable`);
+      } else if (blockers.notOffered.some((offered) => sameKey(offered, key))) {
         parts.push(`${keyId(key)} isn${APOSTROPHE}t offered in ${termName}`);
       } else if (blockers.filteredOut.some((filtered) => sameKey(filtered, key))) {
         parts.push(`your rules rule out every ${keyId(key)} section`);
@@ -143,7 +146,16 @@ export const ScheduleNoResultsText = {
     const result: NoResultsReason[] = [];
 
     for (const report of diagnostics.courses) {
-      if (!report.isBlocked || !report.isRequired) continue;
+      if (!report.isBlocked || !report.unavailableCRN) continue;
+      result.push({
+        symbol: "exclamationmark.triangle",
+        title: `CRN ${report.unavailableCRN} is unavailable`,
+        detail: `${keyId(report.key)} stays locked to that section.`,
+      });
+    }
+
+    for (const report of diagnostics.courses) {
+      if (!report.isBlocked || !report.isRequired || report.unavailableCRN) continue;
       if (report.totalSections === 0) {
         result.push({
           symbol: "questionmark.folder",
@@ -167,7 +179,7 @@ export const ScheduleNoResultsText = {
     if (count) result.push(count);
 
     for (const report of diagnostics.courses) {
-      if (!report.isBlocked || report.isRequired || report.totalSections <= 0) continue;
+      if (!report.isBlocked || report.isRequired || report.unavailableCRN || report.totalSections <= 0) continue;
       result.push({
         symbol: "minus.circle",
         title: `${keyId(report.key)} (optional) can${APOSTROPHE}t be added`,

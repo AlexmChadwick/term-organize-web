@@ -12,7 +12,7 @@ import { CourseEquivalences } from "./equivalences";
 import type { CourseKey, Requisite, Term } from "./models";
 import { compareCourseKeys, courseKeyOf, creditsLabel, keyId, referencedCourses, sameKey, termCalendarYear, termSeason } from "./models";
 import type { DegreePlan, DegreePlanCourse, DegreePlanTerm, PlanSeason } from "./requirements";
-import { seasonStartMonth, termSortKey } from "./requirements";
+import { PLAN_SEASON_SHORT, seasonStartMonth, termSortKey } from "./requirements";
 import type { SchedulePlan } from "./user";
 import { newId } from "./user";
 
@@ -24,6 +24,15 @@ export function countsSeparately(a: Pick<DegreePlanCourse, "title" | "credits">,
   const second = normalizeTitle(b.title);
   if (first && second && first !== second) return true;
   return first.includes("topic") || second.includes("topic");
+}
+
+/** Distinct manual CRNs count separately. Without them, the title rule stands, and the same CRN does not. */
+export function entriesCountSeparately(
+  a: Pick<DegreePlanCourse, "title" | "credits" | "crn">,
+  b: Pick<DegreePlanCourse, "title" | "credits" | "crn">,
+): boolean {
+  if (a.crn && b.crn) return a.crn !== b.crn;
+  return countsSeparately(a, b);
 }
 
 function normalizeTitle(title: string): string {
@@ -152,17 +161,22 @@ export function prerequisiteStatus(
   termIndex: number,
   plan: DegreePlan,
   catalog: CatalogIndex | null,
-  lookup?: (key: CourseKey) => Requisite | null | undefined,
+  lookup?: (key: CourseKey, crn?: string | null) => Requisite | null | undefined,
   equivalences = CourseEquivalences.none(),
+  crn?: string | null,
 ): PrerequisiteStatus {
   const taken = coursesBefore(plan, termIndex);
   const counting = planEquivalences(plan, equivalences);
   const listed = catalog?.course(key);
+  if (crn && catalog) {
+    const section = catalog.sectionByCRN(crn);
+    if (section && section.prereqs !== undefined) return statusOf(section.prereqs, taken, counting);
+  }
   if (listed?.detailsLoaded) {
     return statusOf(listed.prereqs, taken, counting);
   }
   if (lookup) {
-    const known = lookup(key);
+    const known = lookup(key, crn);
     if (known !== undefined) return statusOf(known, taken, counting);
   }
   return { kind: "unknown" };
@@ -174,16 +188,63 @@ export function statusOf(requisite: Requisite | null | undefined, taken: Set<str
   return missing ? { kind: "missing", text: missing } : { kind: "met" };
 }
 
+/** Completed rows, then each semester, in plan order. */
+export function planCourseRows(plan: DegreePlan): DegreePlanCourse[] {
+  return [...plan.completed, ...plan.terms.flatMap((term) => term.courses)];
+}
+
+/**
+ * Course numbers that do not count separately.
+ * A pair warns when it has no CRN, or the same CRN, and neither title contains “topic”.
+ * Different manual CRNs, or a title containing “topic”, do not warn. Every row still counts.
+ */
 export function duplicateKeys(plan: DegreePlan): Set<string> {
-  const planned = plan.terms.flatMap((t) => t.courses);
-  const duplicates = new Set<string>();
-  planned.forEach((course, index) => {
-    if (!course.key) return;
-    const repeatsPlanned = planned.slice(0, index).some((other) => other.key && keyId(other.key) === keyId(course.key!) && !countsSeparately(other, course));
-    const repeatsCompleted = plan.completed.some((other) => other.key && keyId(other.key) === keyId(course.key!) && !countsSeparately(other, course));
-    if (repeatsPlanned || repeatsCompleted) duplicates.add(keyId(course.key));
-  });
-  return duplicates;
+  const rows = planCourseRows(plan).filter((course): course is DegreePlanCourse & { key: CourseKey } => course.key != null);
+  const warned = new Set<string>();
+  for (let index = 0; index < rows.length; index += 1) {
+    for (let earlier = 0; earlier < index; earlier += 1) {
+      const left = rows[index]!;
+      const right = rows[earlier]!;
+      if (!sameKey(left.key, right.key) || entriesCountSeparately(left, right)) continue;
+      warned.add(keyId(left.key));
+    }
+  }
+  return warned;
+}
+
+/** First copy keeps the course code. Later copies are “CS 4973 (2)”, including warned ones. */
+export function courseCopyLabel(plan: DegreePlan, course: DegreePlanCourse): string {
+  if (!course.key) return course.label;
+  const id = keyId(course.key);
+  const copies = planCourseRows(plan).filter((item) => item.key && sameKey(item.key, course.key!));
+  const index = copies.findIndex((item) => item.id === course.id);
+  return index > 0 ? `${id} (${index + 1})` : id;
+}
+
+/** Plan header. `count` is the number of course numbers that appear more than once. */
+export function duplicatePlanNote(count: number): string {
+  const courses = count === 1 ? "course appears" : "courses appear";
+  return `${count} ${courses} more than once in this plan. Each copy still counts.`;
+}
+
+/** Shown when a course number is added somewhere it already exists. */
+export function duplicateAddNote(term: string): string {
+  return `Already in ${term}. Adding it again keeps both copies.`;
+}
+
+/** Where this course number already sits, preferring the list the new row is joining. */
+export function duplicateAddPlace(plan: DegreePlan, key: CourseKey, where: "completed" | number): string | null {
+  const named = (term: DegreePlanTerm) => `${PLAN_SEASON_SHORT[term.season]} ${term.year}`;
+  const holds = (courses: DegreePlanCourse[]) => courses.some((course) => course.key && sameKey(course.key, key));
+  if (typeof where === "number") {
+    const term = plan.terms[where];
+    if (term && holds(term.courses)) return named(term);
+  } else if (holds(plan.completed)) {
+    return "completed courses";
+  }
+  if (holds(plan.completed)) return "completed courses";
+  for (const term of plan.terms) if (holds(term.courses)) return named(term);
+  return null;
 }
 
 export function planTermMatches(term: DegreePlanTerm, banner: Term): boolean {
@@ -235,6 +296,8 @@ export interface AutofillSuggestion {
   detail: string;
   isExactTerm: boolean;
   courses: CourseKey[];
+  /** Parallel to `courses` when a copied entry has a manual CRN. */
+  crns?: (string | null)[];
   unavailable: CourseKey[];
   source: { type: "degree"; planId: string; termId: string } | { type: "schedule"; planId: string };
 }
@@ -252,36 +315,32 @@ export function scheduleSuggestions(options: {
   const target = monthIndexOfTerm(term);
   const exact: AutofillSuggestion[] = [];
   const closest: AutofillSuggestion[] = [];
-  const split = (keys: CourseKey[]) => {
-    if (!index || index.catalog.term.code !== term.code) return { offered: keys, unavailable: [] as CourseKey[] };
-    const offered: CourseKey[] = [];
-    const unavailable: CourseKey[] = [];
-    for (const key of keys) {
-      if (index.sectionsOf(key).length === 0) unavailable.push(key);
-      else offered.push(key);
+  const split = (entries: { key: CourseKey; crn: string | null }[]) => {
+    if (!index || index.catalog.term.code !== term.code) return { offered: entries, unavailable: [] as { key: CourseKey; crn: string | null }[] };
+    const offered: { key: CourseKey; crn: string | null }[] = [];
+    const unavailable: { key: CourseKey; crn: string | null }[] = [];
+    for (const entry of entries) {
+      if (index.sectionsOf(entry.key).length === 0) unavailable.push(entry);
+      else offered.push(entry);
     }
     return { offered, unavailable };
   };
   const plans = [...options.degreePlans].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.updatedAt - a.updatedAt);
   for (const plan of plans) {
-    const done = new Set(plan.completed.flatMap((c) => (c.key ? [keyId(c.key)] : [])));
     const candidates = plan.terms.flatMap((planTerm) => {
-      const seen = new Set<string>();
-      const keys = planTerm.courses.flatMap((c) => {
+      const entries = planTerm.courses.flatMap((c) => {
         if (!c.key) return [];
-        const id = keyId(c.key);
-        if (done.has(id) || already.has(id) || seen.has(id)) return [];
-        seen.add(id);
-        return [c.key];
+        if (!c.crn && already.has(keyId(c.key))) return [];
+        return [{ key: c.key, crn: c.crn ?? null }];
       });
-      if (!keys.length) return [];
+      if (!entries.length) return [];
       const month = planTerm.year * 12 + seasonStartMonth(planTerm.season) - 1;
-      return [{ planTerm, keys, distance: Math.abs(month - target) }];
+      return [{ planTerm, entries, distance: Math.abs(month - target) }];
     });
     if (!candidates.length) continue;
     candidates.sort((a, b) => a.distance - b.distance || termSortKey(b.planTerm) - termSortKey(a.planTerm));
     const best = candidates[0]!;
-    const parts = split(best.keys);
+    const parts = split(best.entries);
     if (!parts.offered.length && !parts.unavailable.length) continue;
     const isExact = planTermMatches(best.planTerm, term);
     const short = `${
@@ -294,8 +353,9 @@ export function scheduleSuggestions(options: {
       title: `From “${plan.name}” · ${short}`,
       detail: isExact ? "Your plan for this term" : best.distance === 0 ? "Planned for this time" : "Closest semester you planned",
       isExactTerm: isExact,
-      courses: parts.offered,
-      unavailable: parts.unavailable,
+      courses: parts.offered.map((entry) => entry.key),
+      crns: parts.offered.map((entry) => entry.crn),
+      unavailable: parts.unavailable.map((entry) => entry.key),
       source: { type: "degree", planId: plan.id, termId: best.planTerm.id },
     };
     if (isExact) exact.push(suggestion);
@@ -306,8 +366,11 @@ export function scheduleSuggestions(options: {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 2)
     .flatMap((plan) => {
-      const keys = plan.courses.map((c) => c.key).filter((k) => !already.has(keyId(k)));
-      if (!keys.length) return [];
+      const entries = plan.courses.flatMap((course) => {
+        if (!course.pinnedCRN && already.has(keyId(course.key))) return [];
+        return [{ key: course.key, crn: course.pinnedCRN ?? null }];
+      });
+      if (!entries.length) return [];
       return [
         {
           id: `schedule-${plan.id}`,
@@ -315,7 +378,8 @@ export function scheduleSuggestions(options: {
           title: `Copy “${plan.name}”`,
           detail: plan.isPrimary ? "Your schedule for this term" : "Another schedule for this term",
           isExactTerm: true,
-          courses: keys,
+          courses: entries.map((entry) => entry.key),
+          crns: entries.map((entry) => entry.crn),
           unavailable: [],
           source: { type: "schedule" as const, planId: plan.id },
         },
@@ -324,7 +388,12 @@ export function scheduleSuggestions(options: {
   return [...exact, ...copies, ...closest];
 }
 
-export function newDegreePlanDraft(name: string, source: DegreePlan | null, schedulePlans: SchedulePlan[], courseLookup: (term: string, key: CourseKey) => { title: string; credits: number } | null): DegreePlan {
+export function newDegreePlanDraft(
+  name: string,
+  source: DegreePlan | null,
+  schedulePlans: SchedulePlan[],
+  courseLookup: (term: string, key: CourseKey) => { title: string; credits: number; creditLow?: number | null; creditHigh?: number | null } | null,
+): DegreePlan {
   const now = Date.now();
   const draft: DegreePlan = {
     id: newId(),
@@ -350,7 +419,6 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
     draft.completed = source.completed.map((c) => ({ ...c, id: newId() }));
     draft.terms = source.terms.map((term) => ({ ...term, id: newId(), courses: term.courses.map((c) => ({ ...c, id: newId() })) }));
   }
-  const done = new Set(draft.completed.flatMap((c) => (c.key ? [keyId(c.key)] : [])));
   for (const plan of schedulePlans) {
     if (!plan.isPrimary || !plan.courses.length) continue;
     const banner: Term = { code: plan.termCode, bannerDescription: "" };
@@ -361,19 +429,32 @@ export function newDegreePlanDraft(name: string, source: DegreePlan | null, sche
       draft.terms.push({ id: newId(), season, year, courses: [] });
       termPosition = draft.terms.length - 1;
     }
-    const present = new Set(draft.terms[termPosition]!.courses.flatMap((c) => (c.key ? [keyId(c.key)] : [])));
+    const unmatched = new Map<string, number>();
+    for (const course of draft.terms[termPosition]!.courses) {
+      if (!course.key) continue;
+      const mark = course.crn ? `${keyId(course.key)}#${course.crn}` : keyId(course.key);
+      unmatched.set(mark, (unmatched.get(mark) ?? 0) + 1);
+    }
     for (const planCourse of plan.courses) {
-      const id = keyId(planCourse.key);
-      if (present.has(id) || done.has(id)) continue;
+      const pin = planCourse.pinnedCRN ?? null;
+      const mark = pin ? `${keyId(planCourse.key)}#${pin}` : keyId(planCourse.key);
+      const left = unmatched.get(mark) ?? 0;
+      if (left > 0) {
+        unmatched.set(mark, left - 1);
+        continue;
+      }
       const course = courseLookup(plan.termCode, planCourse.key);
+      const creditLow = planCourse.creditLow ?? course?.creditLow;
+      const creditHigh = planCourse.creditHigh ?? course?.creditHigh;
       draft.terms[termPosition]!.courses.push({
         id: newId(),
         key: planCourse.key,
         label: keyId(planCourse.key),
         title: (course?.title ?? keyId(planCourse.key)).slice(0, 30),
-        credits: course?.credits ?? 4,
+        credits: planCourse.credits ?? course?.credits ?? 4,
+        ...(creditLow != null && creditHigh != null && creditLow !== creditHigh ? { creditLow, creditHigh } : {}),
+        ...(pin ? { crn: pin } : {}),
       });
-      present.add(id);
     }
   }
   draft.terms.sort((a, b) => termSortKey(a) - termSortKey(b));
