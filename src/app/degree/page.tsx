@@ -3,29 +3,17 @@
 import { courseHref } from "@/components/bits";
 import type { CatalogIndex } from "@/lib/catalog-index";
 import { SemesterMoves } from "@/components/semester-moves";
-import { Button, Modal, Select, TextInput } from "@/components/ui";
+import { Button, Select, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { degreeOpenListedCourses, ruleResults, runDegreeAudit } from "@/lib/degree/audit";
 import { archivedEditions, currentEdition, parseProgramPage, parseUniversitywide, programURL, programsFromIndex, universitywideLink } from "@/lib/degree/catalog-parser";
 import { courseAttributes } from "@/lib/degree/nupath";
 import { declareEquivalence, planCourseKeys, unorderedPairId, type DegreeEquivalencePrompt } from "@/lib/degree/suggestions";
 import { convertRenumbering, coursesToLookUpForRenumbering, likelyRenumberings, type LikelyRenumbering } from "@/lib/degree/substitutions";
-import {
-  addPlanCourse,
-  applySectionPick,
-  commitCourseCRN,
-  courseEntries,
-  noSectionsMessage,
-  openSectionPick,
-  planTermLabel,
-  removePlanCourse,
-  sectionChoice,
-  updatePlanCourse,
-} from "@/lib/degree/double-entry";
 import { duplicateKeys, newDegreePlanDraft, planTermMatches, prerequisiteStatus, termCreditTotal } from "@/lib/degree-logic";
 import { degreePlanText, parseDegreePlanText, DegreeImportError } from "@/lib/degree-format";
 import { downloadBytes, renderDegreePlanPDF } from "@/lib/degree-pdf";
-import { keyId, parseCourseKey, type CourseKey, type CourseSection } from "@/lib/models";
+import { keyId, parseCourseKey, type CourseKey } from "@/lib/models";
 import { promptsForPlan, useCourseFacts, type CourseFactsSnapshot } from "@/lib/plan-course-info";
 import { applyMoveToPlan, type MoveOption } from "@/lib/semester-moves";
 import { catalogYearLabel, completedCredits, concentrationName, editionsAll, estimatedEditions, plannedCredits, type CatalogProgram, type CatalogYear, type DegreePlan, type DegreePlanCourse, type DegreePlanTerm, type PlanSeason, type ProgramRequirements, PLAN_SEASON_SHORT } from "@/lib/requirements";
@@ -462,67 +450,19 @@ function PlanEditor({
   onDismissEquivalence: (prompt: DegreeEquivalencePrompt) => void;
 }) {
   const [draft, setDraft] = useState("CS 3000");
-  const [pick, setPick] = useState<null | {
-    where: "completed" | number;
-    key: CourseKey;
-    termLabel: string;
-    choices: Record<string, string>;
-    nextCRN: string;
-    error: string | null;
-  }>(null);
   const total = completedCredits(plan) + plannedCredits(plan);
-  const opened = pick ? openSectionPick(plan, pick.key) : null;
-  const pickSections = sectionsForDoubleAdd(index, plan, pick?.where ?? "completed", pick?.key ?? null);
-
-  function blankCourse(key: CourseKey | null, title?: string | null, crn?: string | null): DegreePlanCourse {
-    const info = key && index ? index.course(key) : null;
-    return {
-      id: newId(),
-      key,
-      label: key ? keyId(key) : draft.trim(),
-      title: title?.trim() || info?.title || (key ? keyId(key) : draft.trim()),
-      credits: info?.maxCredits ?? 4,
-      ...(crn ? { crn } : {}),
-    };
-  }
 
   function addCourse(where: "completed" | number) {
     const key = parseCourseKey(draft);
-    if (key && openSectionPick(plan, key)) {
-      const term = where === "completed" ? null : plan.terms[where];
-      setPick({
-        where,
-        key,
-        termLabel: term ? planTermLabel(term) : "completed courses",
-        choices: {},
-        nextCRN: "",
-        error: null,
-      });
-      return;
-    }
-    const next = addPlanCourse(plan, where, blankCourse(key));
-    if (next) onChange(next);
-  }
-
-  function confirmPick() {
-    if (!pick || !opened) return;
-    const nextSection = pickSections.find((section) => section.crn === pick.nextCRN);
-    const result = applySectionPick(
-      plan,
-      pick.where,
-      blankCourse(pick.key, nextSection?.title, pick.nextCRN),
-      opened.unpinned.map((row) => {
-        const section = pickSections.find((item) => item.crn === pick.choices[row.id]);
-        return { id: row.id, crn: pick.choices[row.id] ?? "", title: section?.title ?? null };
-      }),
-      { crn: pick.nextCRN, title: nextSection?.title ?? null },
-    );
-    if (typeof result === "string") {
-      setPick({ ...pick, error: result });
-      return;
-    }
-    setPick(null);
-    onChange(result);
+    const course: DegreePlanCourse = {
+      id: newId(),
+      key,
+      label: key ? keyId(key) : draft.trim(),
+      title: key ? keyId(key) : draft.trim(),
+      credits: 4,
+    };
+    if (where === "completed") onChange({ ...plan, completed: [...plan.completed, course] });
+    else onChange({ ...plan, terms: plan.terms.map((term, index) => (index === where ? { ...term, courses: [...term.courses, course] } : term)) });
   }
 
   return (
@@ -563,16 +503,6 @@ function PlanEditor({
           Add semester
         </Button>
       </div>
-      <SectionPicker
-        pick={pick}
-        opened={opened}
-        sections={pickSections}
-        catalogReady={index != null}
-        onChooseExisting={(id, crn) => pick && setPick({ ...pick, choices: { ...pick.choices, [id]: crn }, error: null })}
-        onChooseNext={(crn) => pick && setPick({ ...pick, nextCRN: crn, error: null })}
-        onConfirm={confirmPick}
-        onClose={() => setPick(null)}
-      />
       {prompts.length ? (
         <div className="grid gap-2">
           <h3 className="font-semibold">Course equivalences</h3>
@@ -583,7 +513,7 @@ function PlanEditor({
       ) : null}
       <div>
         <h3 className="font-semibold">Completed</h3>
-        <CourseList plan={plan} courses={plan.completed} term={null} index={index} termCode={termCode} retiredNote={retiredNote} onChange={onChange} />
+        <CourseList courses={plan.completed} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, completed: courses })} />
       </div>
       {plan.terms.map((term, termIndex) => (
         <div key={term.id} className="rounded-2xl border border-line p-3">
@@ -604,7 +534,7 @@ function PlanEditor({
               Remove semester
             </Button>
           </div>
-          <CourseList plan={plan} courses={term.courses} term={term} index={index} termCode={termCode} retiredNote={retiredNote} onChange={onChange} />
+          <CourseList courses={term.courses} termCode={termCode} retiredNote={retiredNote} onChange={(courses) => onChange({ ...plan, terms: plan.terms.map((item) => (item.id === term.id ? { ...item, courses } : item)) })} />
           <ul className="mt-2 text-sm">
             {term.courses.map((course) => {
               if (!course.key) return null;
@@ -645,229 +575,28 @@ function blockingCourses(
   return keys;
 }
 
-function sectionsForDoubleAdd(
-  index: CatalogIndex | null,
-  plan: DegreePlan,
-  where: "completed" | number,
-  key: CourseKey | null,
-): CourseSection[] {
-  if (!index || !key) return [];
-  if (where !== "completed") {
-    const term = plan.terms[where];
-    if (!term || !planTermMatches(term, index.catalog.term)) return [];
-  }
-  return index.sectionsOf(key);
-}
-
-function SectionPicker({
-  pick,
-  opened,
-  sections,
-  catalogReady,
-  onChooseExisting,
-  onChooseNext,
-  onConfirm,
-  onClose,
-}: {
-  pick: { termLabel: string; choices: Record<string, string>; nextCRN: string; error: string | null } | null;
-  opened: ReturnType<typeof openSectionPick>;
-  sections: CourseSection[];
-  catalogReady: boolean;
-  onChooseExisting: (id: string, crn: string) => void;
-  onChooseNext: (crn: string) => void;
-  onConfirm: () => void;
-  onClose: () => void;
-}) {
-  const choices = sections.map(sectionChoice);
-  const taken = new Set(opened?.taken ?? []);
-  const chosen = opened ? [...opened.unpinned.map((row) => pick?.choices[row.id]?.trim() ?? ""), pick?.nextCRN.trim() ?? ""] : [];
-  const ready = chosen.length > 0 && chosen.every(Boolean) && new Set(chosen).size === chosen.length && chosen.every((crn) => !taken.has(crn));
-  return (
-    <Modal open={pick != null} onOpenChange={(open) => { if (!open) onClose(); }} title="Pick a section to add this course twice.">
-      {!pick || !opened ? null : !catalogReady ? (
-        <p className="text-sm text-muted">Loading sections for {pick.termLabel}…</p>
-      ) : sections.length === 0 ? (
-        <div className="grid gap-3">
-          <p className="text-sm">{noSectionsMessage(pick.termLabel)}</p>
-          {opened.unpinned.map((row) => (
-            <label key={row.id} className="label">
-              CRN for {row.label} already in the plan
-              <TextInput value={pick.choices[row.id] ?? ""} onChange={(event) => onChooseExisting(row.id, event.target.value)} />
-            </label>
-          ))}
-          <label className="label">
-            CRN for the new row
-            <TextInput value={pick.nextCRN} onChange={(event) => onChooseNext(event.target.value)} />
-          </label>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {opened.unpinned.length ? (
-            <p className="text-sm text-muted">The course already in the plan has no section. Choose one for that row and a different one for the new row.</p>
-          ) : null}
-          {opened.unpinned.map((row) => (
-            <fieldset key={row.id} className="grid gap-2">
-              <legend className="text-sm font-semibold">Section for {row.label} already in the plan</legend>
-              {choices.map((choice) => (
-                <SectionOption
-                  key={choice.crn}
-                  name={`existing-${row.id}`}
-                  choice={choice}
-                  checked={pick.choices[row.id] === choice.crn}
-                  disabled={taken.has(choice.crn) || (pick.nextCRN === choice.crn)}
-                  onChange={() => onChooseExisting(row.id, choice.crn)}
-                />
-              ))}
-            </fieldset>
-          ))}
-          <fieldset className="grid gap-2">
-            <legend className="text-sm font-semibold">Section for the new row</legend>
-            {choices.map((choice) => (
-              <SectionOption
-                key={choice.crn}
-                name="new-row"
-                choice={choice}
-                checked={pick.nextCRN === choice.crn}
-                disabled={taken.has(choice.crn) || opened.unpinned.some((row) => pick.choices[row.id] === choice.crn)}
-                onChange={() => onChooseNext(choice.crn)}
-              />
-            ))}
-          </fieldset>
-        </div>
-      )}
-      {pick?.error ? <p className="mt-3 text-sm text-bad">{pick.error}</p> : null}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button type="button" onClick={onConfirm} disabled={!ready}>Add course</Button>
-        <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
-      </div>
-    </Modal>
-  );
-}
-
-function SectionOption({
-  name,
-  choice,
-  checked,
-  disabled,
-  onChange,
-}: {
-  name: string;
-  choice: ReturnType<typeof sectionChoice>;
-  checked: boolean;
-  disabled: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className={`flex items-start gap-2 text-sm ${disabled ? "text-muted" : ""}`}>
-      <input className="mt-1" type="radio" name={name} value={choice.crn} checked={checked} disabled={disabled} onChange={onChange} />
-      <span>
-        <span className="font-semibold">{choice.title}</span>
-        <span className="block text-muted">CRN {choice.crn} · {choice.instructor} · {choice.times}</span>
-      </span>
-    </label>
-  );
-}
-
-function CourseList({
-  plan,
-  courses,
-  term,
-  index,
-  onChange,
-  termCode,
-  retiredNote,
-}: {
-  plan: DegreePlan;
-  courses: DegreePlanCourse[];
-  term: DegreePlanTerm | null;
-  index: CatalogIndex | null;
-  onChange: (plan: DegreePlan) => void;
-  termCode: string;
-  retiredNote: (key: CourseKey) => string | null;
-}) {
-  const [error, setError] = useState<string | null>(null);
+function CourseList({ courses, onChange, termCode, retiredNote }: { courses: DegreePlanCourse[]; onChange: (courses: DegreePlanCourse[]) => void; termCode: string; retiredNote: (key: CourseKey) => string | null }) {
   if (!courses.length) return <p className="mt-2 text-sm text-muted">None yet.</p>;
   return (
-    <div>
-      {error ? <p className="mt-2 text-sm text-bad">{error}</p> : null}
-      <ul className="mt-2 grid gap-2">
-        {courses.map((course) => {
-          const listed = course.key && index && term && planTermMatches(term, index.catalog.term) ? index.sectionsOf(course.key) : [];
-          const resolved = course.key && course.crn && index ? index.sectionsOf(course.key).find((section) => section.crn === course.crn)?.title ?? null : null;
-          const copies = course.key ? courseEntries(plan, course.key).length : 1;
-          const taken = new Set(
-            course.key
-              ? courseEntries(plan, course.key).flatMap((place) => (place.course.id !== course.id && place.course.crn ? [place.course.crn] : []))
-              : [],
-          );
-          return (
-            <li key={course.id} className="flex flex-wrap items-center gap-2 text-sm">
-              {course.key ? (
-                <Link className="font-semibold underline" href={courseHref(termCode, course.key)}>
-                  {course.label}
-                </Link>
-              ) : (
-                <span className="font-semibold">{course.label}</span>
-              )}
-              {course.crn ? (
-                <span className="text-muted">
-                  CRN {course.crn}
-                  {resolved ? ` · ${resolved}` : ""}
-                </span>
-              ) : null}
-              {course.key && retiredNote(course.key) ? <span className="text-muted">{retiredNote(course.key)}</span> : null}
-              {listed.length ? (
-                <Select
-                  aria-label={`Section for ${course.label}`}
-                  className="max-w-xs py-1"
-                  value={course.crn ?? ""}
-                  onChange={(event) => {
-                    const crn = event.target.value;
-                    const section = listed.find((item) => item.crn === crn);
-                    const result = commitCourseCRN(plan, course.id, crn, section?.title ?? null);
-                    if (typeof result === "string") setError(result);
-                    else {
-                      setError(null);
-                      onChange(result);
-                    }
-                  }}
-                >
-                  <option value="" disabled={copies > 1}>
-                    {copies > 1 ? "Choose a section" : "No specific section"}
-                  </option>
-                  {course.crn && !listed.some((section) => section.crn === course.crn) ? <option value={course.crn}>CRN {course.crn}</option> : null}
-                  {listed.map((section) => (
-                    <option key={section.crn} value={section.crn} disabled={taken.has(section.crn)}>
-                      {section.crn} · {section.title}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
-                <TextInput
-                  aria-label={`CRN for ${course.label}`}
-                  className="w-28 py-1"
-                  value={course.crn ?? ""}
-                  placeholder="CRN"
-                  onChange={(event) => {
-                    const result = commitCourseCRN(plan, course.id, event.target.value, null);
-                    if (typeof result === "string") setError(result);
-                    else {
-                      setError(null);
-                      onChange(result);
-                    }
-                  }}
-                />
-              )}
-              <TextInput className="max-w-[220px] py-1" value={course.title} onChange={(event) => onChange(updatePlanCourse(plan, course.id, { title: event.target.value }))} />
-              <TextInput className="w-20 py-1" value={String(course.credits)} onChange={(event) => onChange(updatePlanCourse(plan, course.id, { credits: Number(event.target.value) || 0 }))} />
-              <button type="button" className="text-muted" onClick={() => onChange(removePlanCourse(plan, course.id))}>
-                Remove
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+    <ul className="mt-2 grid gap-2">
+      {courses.map((course) => (
+        <li key={course.id} className="flex flex-wrap items-center gap-2 text-sm">
+          {course.key ? (
+            <Link className="font-semibold underline" href={courseHref(termCode, course.key)}>
+              {course.label}
+            </Link>
+          ) : (
+            <span className="font-semibold">{course.label}</span>
+          )}
+          {course.key && retiredNote(course.key) ? <span className="text-muted">{retiredNote(course.key)}</span> : null}
+          <TextInput className="max-w-[220px] py-1" value={course.title} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, title: event.target.value } : item)))} />
+          <TextInput className="w-20 py-1" value={String(course.credits)} onChange={(event) => onChange(courses.map((item) => (item.id === course.id ? { ...item, credits: Number(event.target.value) || 0 } : item)))} />
+          <button type="button" className="text-muted" onClick={() => onChange(courses.filter((item) => item.id !== course.id))}>
+            Remove
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
