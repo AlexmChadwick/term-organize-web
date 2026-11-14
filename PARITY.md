@@ -16,7 +16,7 @@ This site ports the user-facing behavior of Term Organize that a browser can do.
 | Constraint generator, scoring, reasons, empty explanations, relaxations | `src/lib/schedule/*` | Ported. The page uses the Swift limits (5,000 results, 0.9s exhaustive pass, then a sample) and runs the search in a Web Worker. The week is browsed one option at a time. Very large combinations can be sampled, and the page says when the search was not exhaustive. |
 | Preferences survey | `/schedule` | Ported. Time of day, limits and how strict they are, days off, class-day layout, blocked times, breaks, gaps, lunch length, classes and hours per day, format, seats, campus, professors, a credit target, and hide-full. |
 | Natural-language preferences (`ScheduleAssistant`, Apple Intelligence) | `src/lib/nl.ts` | Web substitute. A deterministic reader uses the same cues (times, days off, lunch, format, seats). It does not call a model. |
-| Export `.ics`, copy CRNs, share image | `/schedule` | Ported. The image is a PNG download. |
+| Export `.ics`, copy CRNs, share image | `/schedule`, `src/lib/ics.ts` | Ported. The ICS export includes weekly meetings aligned to the first class day, final exams (timed and all-day), America/New_York VTIMEZONE, and RFC 5545 line folding. The image is a PNG download. |
 | Degree-plan text import/export | `src/lib/degree-format.ts` | Ported, including the View Plan line layout. |
 | Degree-plan PDF import | `src/lib/pdf-text.ts` (pdf.js) | Ported in the browser. |
 | Degree-plan PDF export (A4, Helvetica 12 pt, dash bullets) | `src/lib/degree-pdf.ts` | Ported |
@@ -44,7 +44,7 @@ This site ports the user-facing behavior of Term Organize that a browser can do.
 
 ## Tests
 
-The Swift suites are ported assertion by assertion under `src/lib/**/*.swift.test.ts` and `src/lib/prerequisite-data.test.ts` (472 tests). That includes core models, Banner parsers, search, catalog and shell support, schedule generation, preferences, degree plans and PDF round-trip, the audit, NUpath, substitutions, prerequisite and course-info lookup, offering history, and cloud-sync merge rules. Cloud sync itself is not in the product UI.
+The Swift suites are ported assertion by assertion under `src/lib/**/*.swift.test.ts`, `src/lib/prerequisite-data.test.ts`, and `src/lib/ics.test.ts` (478 tests). That includes core models, Banner parsers, search, catalog and shell support, schedule generation, preferences, degree plans and PDF round-trip, the audit, NUpath, substitutions, prerequisite and course-info lookup, offering history, calendar ICS export, and cloud-sync merge rules. Cloud sync itself is not in the product UI.
 
 Playwright (`e2e/main.spec.ts`) covers home, search, a course, a section, a schedule, rooms, settings, legal text, professors, the watchlist, and a degree-plan PDF import/export plus an audit.
 
