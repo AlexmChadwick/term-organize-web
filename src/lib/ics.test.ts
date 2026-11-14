@@ -41,7 +41,7 @@ function makeSection(overrides: Partial<CourseSection> = {}): CourseSection {
         kind: "Class",
       },
     ],
-    instructors: [{ name: "Prof Smith", email: "smith@example.edu" }],
+    instructors: [{ name: "Prof Smith", primary: true, email: "smith@example.edu" }],
     ...overrides,
   };
 }
@@ -144,7 +144,7 @@ describe("iCalendar export", () => {
     const section = makeSection({
       title: "Extremely Long Course Title Designed To Exceed The RFC 5545 Line Folding Limit",
       instructors: [
-        { name: "Professor Long Name With Multiple Affiliations", email: "test@example.edu" },
+        { name: "Professor Long Name With Multiple Affiliations", primary: true, email: "test@example.edu" },
       ],
     });
 
