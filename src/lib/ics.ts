@@ -12,7 +12,9 @@ import {
   instructorLabel,
   keyId,
   meetingHasTime,
+  meetingIsOnline,
   meetingLocation,
+  sectionIsOnline,
   sectionKey,
   weeklyMeetings,
 } from "./models";
@@ -101,17 +103,41 @@ function untilStamp(iso: string): string {
   const noonUtc = new Date(Date.UTC(y!, (m ?? 1) - 1, d!, 12, 0, 0));
   const tzPart = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
-    timeZoneName: "short",
+    timeZoneName: "longOffset",
   })
     .formatToParts(noonUtc)
     .find((p) => p.type === "timeZoneName")?.value;
-  const offsetHours = tzPart === "EDT" ? 4 : 5;
-  const targetUtc = new Date(Date.UTC(y!, (m ?? 1) - 1, d!, 23 + offsetHours, 59, 59));
-  const yy = targetUtc.getUTCFullYear();
-  const mm = String(targetUtc.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(targetUtc.getUTCDate()).padStart(2, "0");
-  const hh = String(targetUtc.getUTCHours()).padStart(2, "0");
-  return `${yy}${mm}${dd}T${hh}5959Z`;
+  const match = tzPart?.match(/^GMT([+-])(\d{2}):(\d{2})$/);
+  if (!match) throw new Error(`Unable to determine New York UTC offset: ${tzPart}`);
+  const sign = match[1] === "+" ? 1 : -1;
+  const offsetMinutes = sign * (Number(match[2]) * 60 + Number(match[3]));
+  const targetUtc = new Date(
+    Date.UTC(y!, (m ?? 1) - 1, d!, 23, 59, 59) - offsetMinutes * 60_000,
+  );
+  return utcStamp(targetUtc);
+}
+
+function utcStamp(date: Date): string {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function eventLocation(section: CourseSection, meeting: Meeting): string | null {
+  if (meetingIsOnline(meeting) || sectionIsOnline(section)) return "Online";
+  const location = meetingLocation(meeting);
+  return location === "Location TBA" ? null : location;
+}
+
+function eventDescription(section: CourseSection, final: boolean): string {
+  const sectionTitle = section.sectionNumber
+    ? `${section.classType} ${section.sectionNumber}`
+    : section.classType;
+  const notes = [section.title, `CRN ${section.crn} · ${sectionTitle}`];
+  if (section.instructors?.length) {
+    notes.push(`Instructor: ${instructorLabel(section)}`);
+  }
+  notes.push("Added from Term Organize");
+  if (final) notes.unshift("Final exam");
+  return notes.join("\n");
 }
 
 const DAY_ICS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
@@ -120,12 +146,15 @@ function eventForWeekly(
   section: CourseSection,
   meeting: Meeting,
   index: number,
+  calendarId: string,
+  stamp: string,
 ): string[] | null {
   if (
     !meetingHasTime(meeting) ||
     meeting.start == null ||
     meeting.end == null ||
-    !meeting.startDate
+    !meeting.startDate ||
+    !meeting.endDate
   ) {
     return null;
   }
@@ -138,23 +167,20 @@ function eventForWeekly(
 
   const days = weekdays.map((d) => DAY_ICS[d]).join(",");
   const code = keyId(sectionKey(section));
-  const uid = `${section.crn}-${index}@termorganize.local`;
-  const summary = escapeText(`${code} ${section.title}`);
-  const description = escapeText(
-    `${section.classType} · CRN ${section.crn} · ${instructorLabel(section)}`,
-  );
-  const loc = escapeText(meetingLocation(meeting));
+  const uid = `${calendarId}-${section.crn}-${index}@termorganize.local`;
+  const summary = escapeText(`${code} ${section.classType}`);
+  const description = escapeText(eventDescription(section, false));
+  const location = eventLocation(section, meeting);
 
   const lines = [
     "BEGIN:VEVENT",
     `UID:${uid}`,
+    `DTSTAMP:${stamp}`,
     `SUMMARY:${summary}`,
     `DTSTART;TZID=America/New_York:${icsDateTime(firstDate, meeting.start)}`,
     `DTEND;TZID=America/New_York:${icsDateTime(firstDate, meeting.end)}`,
-    `RRULE:FREQ=WEEKLY;BYDAY=${days}${
-      meeting.endDate ? `;UNTIL=${untilStamp(meeting.endDate)}` : ""
-    }`,
-    `LOCATION:${loc}`,
+    `RRULE:FREQ=WEEKLY;BYDAY=${days};UNTIL=${untilStamp(meeting.endDate)}`,
+    ...(location ? [`LOCATION:${escapeText(location)}`] : []),
     `DESCRIPTION:${description}`,
     "TRANSP:OPAQUE",
     "END:VEVENT",
@@ -162,20 +188,26 @@ function eventForWeekly(
   return lines;
 }
 
-function eventForFinal(section: CourseSection, exam: Meeting): string[] | null {
+function eventForFinal(
+  section: CourseSection,
+  exam: Meeting,
+  calendarId: string,
+  stamp: string,
+): string[] | null {
   if (!exam.startDate) return null;
   const code = keyId(sectionKey(section));
-  const uid = `${section.crn}-final@termorganize.local`;
+  const uid = `${calendarId}-${section.crn}-final@termorganize.local`;
   const summary = escapeText(`${code} Final Exam`);
-  const description = escapeText(
-    `Final exam\n${section.title}\nCRN ${section.crn} · ${section.classType} · ${instructorLabel(
-      section,
-    )}`,
-  );
-  const loc = escapeText(meetingLocation(exam));
+  const description = escapeText(eventDescription(section, true));
+  const location = eventLocation(section, exam);
 
   const timed = exam.start != null && exam.end != null;
-  const lines = ["BEGIN:VEVENT", `UID:${uid}`, `SUMMARY:${summary}`];
+  const lines = [
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${stamp}`,
+    `SUMMARY:${summary}`,
+  ];
 
   if (timed) {
     lines.push(
@@ -190,7 +222,7 @@ function eventForFinal(section: CourseSection, exam: Meeting): string[] | null {
   }
 
   lines.push(
-    `LOCATION:${loc}`,
+    ...(location ? [`LOCATION:${escapeText(location)}`] : []),
     `DESCRIPTION:${description}`,
     "TRANSP:OPAQUE",
     "END:VEVENT",
@@ -201,7 +233,10 @@ function eventForFinal(section: CourseSection, exam: Meeting): string[] | null {
 export function sectionsToICS(
   sections: CourseSection[],
   calendarName: string,
+  calendarId: string = calendarName,
+  now: Date = new Date(),
 ): string {
+  const stamp = utcStamp(now);
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -233,13 +268,13 @@ export function sectionsToICS(
   for (const section of sections) {
     const weekly = weeklyMeetings(section);
     weekly.forEach((m, i) => {
-      const eventLines = eventForWeekly(section, m, i);
+      const eventLines = eventForWeekly(section, m, i, calendarId, stamp);
       if (eventLines) lines.push(...eventLines);
     });
 
     const exam = finalExam(section);
     if (exam && exam.startDate) {
-      const examLines = eventForFinal(section, exam);
+      const examLines = eventForFinal(section, exam, calendarId, stamp);
       if (examLines) lines.push(...examLines);
     }
   }

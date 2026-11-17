@@ -358,7 +358,7 @@ export default function SchedulePage() {
             <Button
               type="button"
               variant="ghost"
-              onClick={() => downloadText(`${active?.name ?? "schedule"}.ics`, sectionsToICS(selected, active?.name ?? "Term Organize"), "text/calendar")}
+              onClick={() => downloadText(`${active?.name ?? "schedule"}.ics`, sectionsToICS(selected, active?.name ?? "Term Organize", active?.id ?? termCode), "text/calendar")}
             >
               Export .ics
             </Button>
