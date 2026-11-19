@@ -44,7 +44,7 @@ This site ports the user-facing behavior of Term Organize that a browser can do.
 
 ## Tests
 
-The Swift suites are ported assertion by assertion under `src/lib/**/*.swift.test.ts`, `src/lib/prerequisite-data.test.ts`, and `src/lib/ics.test.ts` (524 tests). That includes core models, Banner parsers, search, catalog and shell support, schedule generation, preferences, degree plans and PDF round-trip, the audit, NUpath, substitutions, prerequisite and course-info lookup, offering history, calendar ICS export, and cloud-sync merge rules. Cloud sync itself is not in the product UI.
+The full Vitest suite covers core models, Banner parsers, search, catalog and shell support, schedule generation, preferences, degree plans and PDF round-trip, the audit, NUpath, substitutions, prerequisite and course-info lookup, offering history, calendar ICS export, and cloud-sync merge rules. Cloud sync itself is not in the product UI.
 
 Playwright (`e2e/main.spec.ts`) covers home, search, a course, a section, a schedule, rooms, settings, legal text, professors, the watchlist, and a degree-plan PDF import/export plus an audit.
 

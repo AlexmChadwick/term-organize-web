@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import type { CourseSection, Meeting } from "./models";
+import type { CourseKey, CourseSection, Meeting } from "./models";
 import {
   dayIndices,
   finalExam,
@@ -13,7 +13,7 @@ import {
   keyId,
   meetingHasTime,
   meetingIsOnline,
-  meetingLocation,
+  meetingLongLocation,
   sectionIsOnline,
   sectionKey,
   weeklyMeetings,
@@ -123,15 +123,15 @@ function utcStamp(date: Date): string {
 
 function eventLocation(section: CourseSection, meeting: Meeting): string | null {
   if (meetingIsOnline(meeting) || sectionIsOnline(section)) return "Online";
-  const location = meetingLocation(meeting);
+  const location = meetingLongLocation(meeting);
   return location === "Location TBA" ? null : location;
 }
 
-function eventDescription(section: CourseSection, final: boolean): string {
+function eventDescription(section: CourseSection, title: string, final: boolean): string {
   const sectionTitle = section.sectionNumber
     ? `${section.classType} ${section.sectionNumber}`
     : section.classType;
-  const notes = [section.title, `CRN ${section.crn} · ${sectionTitle}`];
+  const notes = [title, `CRN ${section.crn} · ${sectionTitle}`];
   if (section.instructors?.length) {
     notes.push(`Instructor: ${instructorLabel(section)}`);
   }
@@ -148,6 +148,7 @@ function eventForWeekly(
   index: number,
   calendarId: string,
   stamp: string,
+  title: string,
 ): string[] | null {
   if (
     !meetingHasTime(meeting) ||
@@ -167,9 +168,9 @@ function eventForWeekly(
 
   const days = weekdays.map((d) => DAY_ICS[d]).join(",");
   const code = keyId(sectionKey(section));
-  const uid = `${calendarId}-${section.crn}-${index}@termorganize.local`;
+  const uid = `${calendarId}-${section.crn}-${index}@neuclasssearch`;
   const summary = escapeText(`${code} ${section.classType}`);
-  const description = escapeText(eventDescription(section, false));
+  const description = escapeText(eventDescription(section, title, false));
   const location = eventLocation(section, meeting);
 
   const lines = [
@@ -193,12 +194,13 @@ function eventForFinal(
   exam: Meeting,
   calendarId: string,
   stamp: string,
+  title: string,
 ): string[] | null {
   if (!exam.startDate) return null;
   const code = keyId(sectionKey(section));
-  const uid = `${calendarId}-${section.crn}-final@termorganize.local`;
+  const uid = `${calendarId}-${section.crn}-final@neuclasssearch`;
   const summary = escapeText(`${code} Final Exam`);
-  const description = escapeText(eventDescription(section, true));
+  const description = escapeText(eventDescription(section, title, true));
   const location = eventLocation(section, exam);
 
   const timed = exam.start != null && exam.end != null;
@@ -233,10 +235,12 @@ function eventForFinal(
 export function sectionsToICS(
   sections: CourseSection[],
   calendarName: string,
-  calendarId: string = calendarName,
+  calendarId: string,
   now: Date = new Date(),
+  courseTitle?: (key: CourseKey) => string | undefined,
 ): string {
   const stamp = utcStamp(now);
+  const planId = calendarId.toLowerCase();
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -266,15 +270,16 @@ export function sectionsToICS(
   ];
 
   for (const section of sections) {
+    const title = courseTitle?.(sectionKey(section)) || section.title;
     const weekly = weeklyMeetings(section);
     weekly.forEach((m, i) => {
-      const eventLines = eventForWeekly(section, m, i, calendarId, stamp);
+      const eventLines = eventForWeekly(section, m, i, planId, stamp, title);
       if (eventLines) lines.push(...eventLines);
     });
 
     const exam = finalExam(section);
     if (exam && exam.startDate) {
-      const examLines = eventForFinal(section, exam, calendarId, stamp);
+      const examLines = eventForFinal(section, exam, planId, stamp, title);
       if (examLines) lines.push(...examLines);
     }
   }
