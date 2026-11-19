@@ -6,6 +6,16 @@ A browser version of [Term Organize](https://github.com/AlexmChadwick/Northeaste
 
 Course titles, descriptions, seats, and instructor names come from Northeastern’s public class search and academic catalog. That data is © Northeastern University and is not covered by this project’s license. The Fall 2026 and Spring 2027 snapshots in `data/` were converted from the app’s bundled catalogs.
 
+## Platforms and status
+
+Term Organize is an unofficial project and is not affiliated with Northeastern University.
+
+- **macOS / iOS (Swift reference):** [AlexmChadwick/Northeastern-Term-Organize](https://github.com/AlexmChadwick/Northeastern-Term-Organize) - Mac app released, latest v1.1.3 at [github.com/AlexmChadwick/Northeastern-Term-Organize/releases](https://github.com/AlexmChadwick/Northeastern-Term-Organize/releases). iPhone and iPad builds are sideload only (test builds only, not on the App Store or TestFlight).
+- **Web:** [AlexmChadwick/term-organize-web](https://github.com/AlexmChadwick/term-organize-web) (this repository) - port in development, test builds only, not in any store.
+- **Android:** [AlexmChadwick/term-organize-android](https://github.com/AlexmChadwick/term-organize-android) - port in development, test builds only, not in any store.
+- **Linux:** [AlexmChadwick/term-organize-linux](https://github.com/AlexmChadwick/term-organize-linux) - port in development, test builds only, not in any store.
+- **Windows:** [AlexmChadwick/term-organize-windows](https://github.com/AlexmChadwick/term-organize-windows) - port in development, test builds only, not in any store.
+
 ## Install
 
 Term Organize is an early beta. It is unofficial and not affiliated with Northeastern University. There is no hosted version yet, so you run it on your own computer.
