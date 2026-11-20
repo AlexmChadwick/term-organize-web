@@ -358,7 +358,19 @@ export default function SchedulePage() {
             <Button
               type="button"
               variant="ghost"
-              onClick={() => downloadText(`${active?.name ?? "schedule"}.ics`, sectionsToICS(selected, active?.name ?? "Term Organize"), "text/calendar")}
+              disabled={!active}
+              onClick={() => {
+                if (!active) return;
+                const calendarName = `${active.name} - ${termName(index.catalog.term)}`;
+                const contents = sectionsToICS(
+                  selected,
+                  calendarName,
+                  active.id,
+                  undefined,
+                  (key) => index.course(key)?.title ?? index.sectionsOf(key)[0]?.title,
+                );
+                downloadText(`${calendarName}.ics`, contents, "text/calendar");
+              }}
             >
               Export .ics
             </Button>
