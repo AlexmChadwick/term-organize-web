@@ -9,7 +9,7 @@ import { SemesterMoves } from "@/components/semester-moves";
 import { Button, TextArea, TextInput } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
-import { sectionsToICS, downloadText } from "@/lib/ics";
+import { sectionsToICS, downloadText, exportableEventCount, NOTHING_TO_EXPORT_NOTICE } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
 import { DAY_SHORT, courseColorAt, courseColorIndex, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
@@ -62,6 +62,8 @@ export default function SchedulePage() {
       return section ? [section] : [];
     });
   }, [index, active]);
+
+  const canExport = useMemo(() => exportableEventCount(selected) > 0, [selected]);
 
   const conflicts = useMemo(() => {
     const pairs: string[] = [];
@@ -358,9 +360,10 @@ export default function SchedulePage() {
             <Button
               type="button"
               variant="ghost"
-              disabled={!active}
+              disabled={!active || !canExport}
+              title={active && !canExport ? NOTHING_TO_EXPORT_NOTICE : undefined}
               onClick={() => {
-                if (!active) return;
+                if (!active || !canExport) return;
                 const calendarName = `${active.name} - ${termName(index.catalog.term)}`;
                 const contents = sectionsToICS(
                   selected,
@@ -374,6 +377,7 @@ export default function SchedulePage() {
             >
               Export .ics
             </Button>
+            {active && !canExport ? <p className="self-center text-sm text-muted">{NOTHING_TO_EXPORT_NOTICE}</p> : null}
             <Button type="button" variant="ghost" onClick={() => void shareImage(selected, active?.name ?? "Schedule", colorFor, hours.start, hours.end, user.preferences.showWeekends, prefs.blockedTimes)}>
               Share image
             </Button>

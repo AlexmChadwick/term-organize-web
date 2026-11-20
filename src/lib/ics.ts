@@ -21,10 +21,10 @@ import {
 
 function escapeText(text: string): string {
   return text
+    .replace(/\r\n|\r|\n/g, "\n")
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\r\n/g, "\\n")
     .replace(/\n/g, "\\n");
 }
 
@@ -287,6 +287,16 @@ export function sectionsToICS(
   lines.push("END:VCALENDAR");
   lines.push("");
   return lines.map(foldLine).join("\r\n");
+}
+
+export const NOTHING_TO_EXPORT_NOTICE =
+  "Nothing to export. Choose a section for at least one course, then export your schedule.";
+
+/** Number of VEVENTs an export of these sections would contain. */
+export function exportableEventCount(sections: CourseSection[]): number {
+  if (sections.length === 0) return 0;
+  const ics = sectionsToICS(sections, "count", "count");
+  return ics.split("\r\n").filter((line) => line === "BEGIN:VEVENT").length;
 }
 
 export function downloadText(
