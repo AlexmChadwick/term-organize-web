@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { sectionsToICS } from "./ics";
+import { exportableEventCount, sectionsToICS } from "./ics";
 import type { CourseSection } from "./models";
 import { Day } from "./models";
 
@@ -309,5 +309,31 @@ describe("iCalendar export", () => {
     });
     const ics = sectionsToICS([section], "Schedule", "plan-a", now);
     expect(ics).toContain(`UNTIL=${until}\r\n`);
+  });
+
+  it("leaves no bare CR or LF in exported bytes for lone CR input", () => {
+    const base = makeSection();
+    const section = makeSection({
+      classType: "Lec\rture",
+      title: "Algo\rrithms\r\nand\nmore",
+      meetings: [{ ...base.meetings[0]!, building: "West\rVillage", room: "1\r08" }],
+    });
+    const ics = sectionsToICS([section], "My\rPlan\r\nTwo\nThree", "plan-a", now);
+    const bytes = new TextEncoder().encode(ics);
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 0x0d) expect(bytes[i + 1]).toBe(0x0a);
+      if (bytes[i] === 0x0a) expect(bytes[i - 1]).toBe(0x0d);
+    }
+    const unfolded = ics.replace(/\r\n /g, "");
+    expect(unfolded).toContain("X-WR-CALNAME:My\\nPlan\\nTwo\\nThree\r\n");
+    expect(unfolded).toContain("SUMMARY:CS 3000 Lec\\nture\r\n");
+    expect(unfolded).toContain("LOCATION:West\\nVillage 1\\n08\r\n");
+    expect(unfolded).toContain("Algo\\nrithms\\nand\\nmore");
+  });
+
+  it("counts exportable events and reports zero for empty plans", () => {
+    expect(exportableEventCount([])).toBe(0);
+    expect(exportableEventCount([makeSection({ meetings: [] })])).toBe(0);
+    expect(exportableEventCount([makeSection()])).toBeGreaterThan(0);
   });
 });
