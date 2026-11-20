@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { exportableEventCount, sectionsToICS } from "./ics";
+import { calendarName, exportableEventCount, sectionsToICS } from "./ics";
 import type { CourseSection } from "./models";
 import { Day } from "./models";
 
@@ -335,5 +335,18 @@ describe("iCalendar export", () => {
     expect(exportableEventCount([])).toBe(0);
     expect(exportableEventCount([makeSection({ meetings: [] })])).toBe(0);
     expect(exportableEventCount([makeSection()])).toBeGreaterThan(0);
+  });
+});
+
+describe("calendarName", () => {
+  it("joins plan and term with a plain hyphen", () => {
+    expect(calendarName("Primary", "Fall 2026")).toBe("Primary - Fall 2026");
+    expect(calendarName("Primary", "Fall 2026")).not.toContain("\u2013");
+  });
+
+  it("falls back to the term name when the plan name is blank or whitespace", () => {
+    expect(calendarName("", "Fall 2026")).toBe("Fall 2026");
+    expect(calendarName("   ", "Fall 2026")).toBe("Fall 2026");
+    expect(`${calendarName(" \t", "Fall 2026")}.ics`).toBe("Fall 2026.ics");
   });
 });
