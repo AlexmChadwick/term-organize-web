@@ -232,6 +232,11 @@ function eventForFinal(
   return lines;
 }
 
+/** `Plan - Term`, or the term alone when the plan name is blank. Used for both the calendar name and the file name. */
+export function calendarName(planName: string, termLabel: string): string {
+  return planName.trim() ? `${planName} - ${termLabel}` : termLabel;
+}
+
 export function sectionsToICS(
   sections: CourseSection[],
   calendarName: string,
