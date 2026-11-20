@@ -6,14 +6,21 @@ A browser version of [Term Organize](https://github.com/AlexmChadwick/Northeaste
 
 Course titles, descriptions, seats, and instructor names come from Northeastern’s public class search and academic catalog. That data is © Northeastern University and is not covered by this project’s license. The Fall 2026 and Spring 2027 snapshots in `data/` were converted from the app’s bundled catalogs.
 
+## Platforms and status
+
+- **macOS / iOS (Swift reference):** [AlexmChadwick/Northeastern-Term-Organize](https://github.com/AlexmChadwick/Northeastern-Term-Organize) - Mac app released, latest v1.1.3 at [github.com/AlexmChadwick/Northeastern-Term-Organize/releases](https://github.com/AlexmChadwick/Northeastern-Term-Organize/releases). iPhone and iPad builds are sideload only (test builds only, not on the App Store or TestFlight).
+- **Web:** [AlexmChadwick/term-organize-web](https://github.com/AlexmChadwick/term-organize-web) (this repository) - port in development, with no published release or store listing.
+- **Android:** [AlexmChadwick/term-organize-android](https://github.com/AlexmChadwick/term-organize-android) - port in development, with no published release or store listing.
+- **Linux:** [AlexmChadwick/term-organize-linux](https://github.com/AlexmChadwick/term-organize-linux) - port in development, with no published release or store listing.
+- **Windows:** [AlexmChadwick/term-organize-windows](https://github.com/AlexmChadwick/term-organize-windows) - port in development, with no published release or store listing.
+
 ## Install
 
-Term Organize is an early beta. It is unofficial and not affiliated with Northeastern University. There is no hosted version yet, so you run it on your own computer.
-
-- **From source:** follow "Run locally" below (Node.js 22 and npm).
-- **Standalone build:** when available, the [Releases page](https://github.com/AlexmChadwick/term-organize-web/releases) has `term-organize-web-<version>.tar.gz`. Unpack it and run `node server.js`. `RUN.md` in the archive has the details.
+There is no hosted version yet. Follow [Run locally](#run-locally) to run it on your computer.
 
 ## Run locally
+
+Use Node.js 22 and npm.
 
 ```bash
 npm install
@@ -40,7 +47,7 @@ npm run e2e
 - Degree plans: import a degree-audit View Plan PDF or text file, edit it, flag duplicates and missing prerequisites, total the credits, export the same A4 layout, and pull courses in from a schedule. When a course is missing a prerequisite, the page suggests a semester to move it to, using about two years of offering history.
 - A catalog audit for a year, program, and concentration, including substitutions, petitions, waivers, equivalences, NUpath, and university-wide minimums.
 - Free rooms and professor teaching calendars from the snapshot.
-- A seat watch that refreshes while a tab is open and can post a browser notification. With Web Push configured, the same alert is sent after the browser is closed.
+- A seat watch that refreshes while a tab is open and can post a browser notification. For alerts after closing the browser, configure Web Push, reopen the site after each server restart to start the sender, and leave the server running.
 - Deep links: `/search?q=`, `/course/202710/CS/3000`, `/section/202710/<crn>`, `/schedule`.
 - Settings, the AGPL text, and JSON export/import. Schedules and plans stay in `localStorage`. The catalog snapshot is cached in IndexedDB.
 
@@ -62,7 +69,7 @@ VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:you@example.com
 ```
 
-Restart the server, open Seat alerts, and turn on “Also alert when this browser is closed.” The server stores that browser’s push subscription and the CRNs you are watching in `data/built/push-subscriptions.json`, and checks Banner about once a minute for subscriptions that are due. It uses them only to send those alerts. There is no account.
+Restart the server, reopen the site, open Seat alerts, and turn on “Also alert when this browser is closed.” After each server restart, reopen the site to start the sender and keep the server running for closed-browser alerts. With VAPID configured, the sender starts only after a request to `/api/banner/terms`, `/api/push/subscribe`, or `/api/push/vapid`. The server stores that browser’s push subscription and the CRNs you are watching in `data/built/push-subscriptions.json`, and checks Banner about once a minute for subscriptions that are due. It uses them only to send those alerts. There is no account.
 
 ## License
 
