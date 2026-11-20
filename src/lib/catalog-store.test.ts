@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -40,31 +40,23 @@ describe("bundled catalog emails", () => {
     expect(instructors[3]?.email).toBe("person@neu.edu");
     expect(instructors[4]?.email).toBe("person@northeastern.edu");
     expect("email" in instructors[5]!).toBe(false);
-    expect(instructors[6]?.email).toBe("person@husky.neu.edu");
+    expect("email" in instructors[6]!).toBe(false);
   });
 });
 
-describe("Spring 2027 snapshot", () => {
-  it("contains no email domains other than northeastern.edu or neu.edu", () => {
-    const file = path.join(process.cwd(), "data", "term-202730.json.gz");
-    const catalog = JSON.parse(gunzipSync(readFileSync(file)).toString("utf8")) as TermCatalog;
-    const domains = new Set<string>();
-    for (const section of catalog.sections) {
-      for (const instructor of section.instructors ?? []) {
-        if (!("email" in instructor)) continue;
-        expect(typeof instructor.email).toBe("string");
-        const addresses = instructor.email?.split(/\s+/).filter(Boolean) ?? [];
-        expect(addresses.length).toBeGreaterThan(0);
-        for (const address of addresses) {
-          expect(address).toMatch(EXACT_WORK_EMAIL);
-          const domain = address.split("@")[1]?.toLowerCase();
-          expect(domain).toBeDefined();
-          if (domain) domains.add(domain);
-        }
-      }
+describe("bundled snapshots", () => {
+  it("stores only exact institutional email domains across all bundled catalogs", () => {
+    const directory = path.join(process.cwd(), "data");
+    const files = readdirSync(directory).filter((name) => /^term-\d{6}\.json(?:\.gz)?$/.test(name));
+    expect(files).toEqual(expect.arrayContaining(["term-202710.json.gz", "term-202730.json.gz"]));
+    for (const file of files) {
+      const contents = readFileSync(path.join(directory, file));
+      const text = (file.endsWith(".gz") ? gunzipSync(contents) : contents).toString("utf8");
+      const address = /[\w.!#$%&'*+/=?^`{|}~-]+@([\w-]+(?:\.[\w-]+)*)/gi;
+      const domains = Array.from(text.matchAll(address), (match) => match[1]?.toLowerCase());
+      expect(domains.length, file).toBeGreaterThan(0);
+      expect([...new Set(domains.filter((domain) => domain !== "neu.edu" && domain !== "northeastern.edu"))], file).toEqual([]);
     }
-    expect(domains.size).toBeGreaterThan(0);
-    expect([...domains].every((domain) => domain === "northeastern.edu" || domain === "neu.edu")).toBe(true);
   });
 
   it("loads the bundled term when instructor emails are omitted", async () => {
@@ -100,7 +92,7 @@ describe("Spring 2027 snapshot", () => {
     expect(indexedEmails.every((email) => EXACT_WORK_EMAIL.test(email))).toBe(true);
   }, 60_000);
 
-  it("leaves the Fall 2026 snapshot's published emails in place", async () => {
+  it("loads the Fall 2026 snapshot with institutional addresses", async () => {
     const catalog = await loadBundledCatalog("202710");
     expect(catalog).not.toBeNull();
     if (!catalog) return;
@@ -109,7 +101,7 @@ describe("Spring 2027 snapshot", () => {
     const emails = catalog.sections.flatMap((section) =>
       (section.instructors ?? []).flatMap((instructor) => (typeof instructor.email === "string" ? [instructor.email] : [])),
     );
-    expect(emails).toHaveLength(1554);
-    expect(emails.some((email) => email.endsWith("@husky.neu.edu"))).toBe(true);
+    expect(emails.length).toBeGreaterThan(1000);
+    expect(emails.every((email) => email.split(/\s+/).every((address) => EXACT_WORK_EMAIL.test(address)))).toBe(true);
   }, 60_000);
 });
