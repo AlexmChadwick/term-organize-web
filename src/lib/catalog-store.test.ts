@@ -3,7 +3,7 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "./catalog-index";
-import { loadBundledCatalog, normalizeBundledCatalog } from "./catalog-store";
+import { loadBundledCatalog, normalizeBundledCatalog, publishedInstructorEmail } from "./catalog-store";
 import type { CourseSection, Instructor, TermCatalog } from "./models";
 
 const EXACT_WORK_EMAIL = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
@@ -44,6 +44,65 @@ describe("bundled catalog emails", () => {
   });
 });
 
+/** Literal address candidate: keeps non-ASCII characters in the domain. A sentence-ending dot in prose is stripped before the domain check; email fields get no such leniency. */
+const CANDIDATE = /[^\s@<>,;"'()[\]]+@[^\s@<>,;"'()[\]]+/g;
+/** Escaped forms such as name [at] example [dot] com or name(at)example(dot)com. */
+const OBFUSCATED = /[\[({]\s*(?:at|dot)\s*[\])}]/i;
+const ALLOWED = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
+
+function allowedAddress(candidate: string): boolean {
+  const domain = candidate.slice(candidate.lastIndexOf("@") + 1);
+  return /^[\x21-\x7e]+$/.test(domain) && ALLOWED.test(candidate);
+}
+
+/** Problems in a parsed catalog payload, found without the runtime sanitizer. */
+function emailProblems(value: unknown, key = ""): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => emailProblems(item, key));
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([name, item]) => emailProblems(item, name));
+  }
+  if (typeof value !== "string") return [];
+  if (key === "email") {
+    return value.split(/[\s,;<>]+/).filter(Boolean).filter((part) => !allowedAddress(part)).map((part) => `email field: ${part}`);
+  }
+  const problems = (value.match(CANDIDATE) ?? []).filter((part) => !allowedAddress(part.replace(/^mailto:/i, "").replace(/[.:!?]+$/, ""))).map((part) => `${key}: ${part}`);
+  if (OBFUSCATED.test(value)) problems.push(`${key}: obfuscated ${value.slice(0, 60)}`);
+  return problems;
+}
+
+describe("raw catalog email check", () => {
+  const record = (email: string, extra: Record<string, unknown> = {}) => ({ sections: [{ instructors: [{ name: "X", email }], ...extra }] });
+
+  it("accepts allowed addresses", () => {
+    expect(emailProblems(record("A.b+c!d@Northeastern.EDU neu@neu.edu", { description: "Write to info@northeastern.edu." }))).toEqual([]);
+  });
+
+  it("catches a student-domain address", () => {
+    expect(emailProblems(record("person@husky.neu.edu"))).toHaveLength(1);
+  });
+
+  it("catches an obfuscated external address in a non-email string", () => {
+    expect(emailProblems(record("a@neu.edu", { description: "Contact jo [at] example [dot] org" })).length).toBeGreaterThan(0);
+    expect(emailProblems(record("a@neu.edu", { notes: "jo(at)example(dot)org" })).length).toBeGreaterThan(0);
+  });
+
+  it("catches an allowed domain with a trailing dot or non-ASCII suffix", () => {
+    expect(emailProblems(record("person@northeastern.edu."))).toHaveLength(1);
+    expect(emailProblems(record("person@neu.edu.", {}))).toHaveLength(1);
+    expect(emailProblems(record("person@neu.edué"))).toHaveLength(1);
+    expect(emailProblems(record("a@neu.edu", { description: "mail person@northeastern.edu.evil.com today" })).length).toBeGreaterThan(0);
+  });
+});
+
+describe("runtime email validator", () => {
+  it("rejects trailing-dot, non-ASCII and lookalike domains and keeps the full local part", () => {
+    for (const bad of ["a@northeastern.edu.", "a@neu.edu.", "a@neu.edué", "a@northeaſtern.edu", "a@neu.edu\u212a", "a@xneu.edu", "a@neu.edu.evil.com", "a@@neu.edu", "@neu.edu"]) {
+      expect(publishedInstructorEmail(bad), bad).toBeUndefined();
+    }
+    expect(publishedInstructorEmail("A!b#c'd+e@NEU.EDU")).toBe("A!b#c'd+e@NEU.EDU");
+  });
+});
+
 describe("bundled snapshots", () => {
   it("stores only exact institutional email domains across all bundled catalogs", () => {
     const directory = path.join(process.cwd(), "data");
@@ -52,10 +111,8 @@ describe("bundled snapshots", () => {
     for (const file of files) {
       const contents = readFileSync(path.join(directory, file));
       const text = (file.endsWith(".gz") ? gunzipSync(contents) : contents).toString("utf8");
-      const address = /[\w.!#$%&'*+/=?^`{|}~-]+@([\w-]+(?:\.[\w-]+)*)/gi;
-      const domains = Array.from(text.matchAll(address), (match) => match[1]?.toLowerCase());
-      expect(domains.length, file).toBeGreaterThan(0);
-      expect([...new Set(domains.filter((domain) => domain !== "neu.edu" && domain !== "northeastern.edu"))], file).toEqual([]);
+      expect(emailProblems(JSON.parse(text)), file).toEqual([]);
+      expect(text.match(CANDIDATE)?.length ?? 0, file).toBeGreaterThan(0);
     }
   });
 
