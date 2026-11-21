@@ -1,43 +1,26 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import { publishedInstructorEmail } from "./instructor-email";
 import { normalizeWaitlist, type Instructor, type TermCatalog } from "./models";
 
 const memory = new Map<string, TermCatalog>();
 
-/** Whole address, exact domain. Subdomains such as husky.neu.edu do not match. */
-const EXACT_WORK_EMAIL = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
-
-/**
- * Banner sometimes stores several addresses in one instructor field. Keep only
- * addresses whose domain is exactly northeastern.edu or neu.edu. A single
- * published address is left as it is, so the Fall 2026 snapshot is unchanged.
- * An omitted email stays omitted: this never fills one in.
- */
-export function publishedInstructorEmail(email: string): string | undefined {
-  if (!/\s/.test(email)) return email;
-  const kept = email.split(/\s+/).filter((part) => EXACT_WORK_EMAIL.test(part));
-  return kept.length > 0 ? kept.join(" ") : undefined;
-}
-
-/** Accepts instructors that omit `email` instead of writing null. */
+/** Filters instructor emails while preserving omitted and null fields. */
 export function normalizeBundledCatalog(catalog: TermCatalog): TermCatalog {
-  normalizeWaitlist(catalog);
-  for (const section of catalog.sections) {
-    for (const instructor of section.instructors ?? []) {
-      acceptInstructorEmail(instructor);
-    }
-  }
-  return catalog;
+  return normalizeWaitlist({
+    ...catalog,
+    sections: catalog.sections.map((section) => section.instructors
+      ? { ...section, instructors: section.instructors.map(normalizeInstructor) }
+      : section),
+  });
 }
 
-function acceptInstructorEmail(instructor: Instructor): void {
-  if (!("email" in instructor)) return;
-  const email = instructor.email;
-  if (typeof email !== "string") return;
-  const next = publishedInstructorEmail(email);
-  if (next === undefined) delete instructor.email;
-  else if (next !== email) instructor.email = next;
+function normalizeInstructor(instructor: Instructor): Instructor {
+  const { email, ...fields } = instructor;
+  if (typeof email !== "string") return instructor;
+  const published = publishedInstructorEmail(email);
+  return published === undefined ? fields : { ...fields, email: published };
 }
 
 function bundledPath(term: string): string {
@@ -65,7 +48,7 @@ export async function loadBuiltCatalog(term: string): Promise<TermCatalog | null
   const cached = memory.get(`built:${term}`);
   if (cached) return cached;
   try {
-    const catalog = normalizeWaitlist(JSON.parse(await readFile(builtCatalogPath(term), "utf8")) as TermCatalog);
+    const catalog = normalizeBundledCatalog(JSON.parse(await readFile(builtCatalogPath(term), "utf8")) as TermCatalog);
     memory.set(`built:${term}`, catalog);
     return catalog;
   } catch {
@@ -93,6 +76,7 @@ export async function listStoredTermCodes(): Promise<string[]> {
 }
 
 export async function saveBuiltCatalog(catalog: TermCatalog): Promise<void> {
+  catalog = normalizeBundledCatalog(catalog);
   const file = builtCatalogPath(catalog.term.code);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(catalog));
@@ -129,10 +113,10 @@ export function catalogTermCodeFromFileName(name: string): string | null {
  * which `CatalogArchive.decode` also accepts when the payload starts with `{`.
  */
 export function encodeCatalogArchive(catalog: TermCatalog): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(catalog));
+  return new TextEncoder().encode(JSON.stringify(normalizeBundledCatalog(catalog)));
 }
 
 export function decodeCatalogArchive(data: Uint8Array): TermCatalog {
   if (data[0] !== 0x7b) throw new Error("Compressed catalog archives need the JSON form.");
-  return normalizeWaitlist(JSON.parse(new TextDecoder().decode(data)) as TermCatalog);
+  return normalizeBundledCatalog(JSON.parse(new TextDecoder().decode(data)) as TermCatalog);
 }
