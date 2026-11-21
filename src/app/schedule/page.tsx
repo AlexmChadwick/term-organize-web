@@ -12,7 +12,7 @@ import { planTermMatches, scheduleSuggestions } from "@/lib/degree-logic";
 import { calendarName, sectionsToICS, downloadText, exportableEventCount, NOTHING_TO_EXPORT_NOTICE } from "@/lib/ics";
 import { interpretPreferences } from "@/lib/nl";
 import type { CourseKey, CourseSection } from "@/lib/models";
-import { DAY_SHORT, courseColorAt, courseColorIndex, dayIndices, keyId, scheduleSummary, sectionsConflict, termName, timeLabel } from "@/lib/models";
+import { DAY_SHORT, courseColorAt, courseColorIndex, dayIndices, keyId, scheduleSummary, openSeats, sectionsConflict, termName, timeLabel, waitlistLabel } from "@/lib/models";
 import { searchCatalog as runSearch } from "@/lib/search";
 import { blockedTimeIsValid, emptyPreferences, schedulePreferencesContext, TIME_BANDS, TIME_BAND_RANGE, bandPreference, setBandPreference, type BlockedTime, type TimeBand, type TimePreference } from "@/lib/preferences";
 import { ScheduleSurveyExtras } from "@/components/schedule-survey";
@@ -669,7 +669,7 @@ function EmptyGeneration({
 
 function sectionChoice(section: CourseSection): string {
   const when = scheduleSummary(section).replaceAll(" – ", "–");
-  return `${section.crn} · ${when} · ${Math.max(0, section.seatsRemaining)} open`;
+  return `${section.crn} · ${when} · ${Math.max(0, openSeats(section))} open${waitlistLabel(section) ? ` · ${waitlistLabel(section)}` : ""}`;
 }
 
 function minutesToTime(minutes?: number | null): string {

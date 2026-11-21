@@ -557,18 +557,30 @@ export function sectionKey(s: Pick<CourseSection, "subject" | "number">): Course
   return { subject: s.subject, number: s.number };
 }
 
-/** Freed seats go to the waitlist first, so a section with a waitlist is not open. */
+/**
+ * Seats a student can take now. Freed seats go to the waitlist first, so a section
+ * with a waitlist has none. Every openness check reads seats through this.
+ */
+export function openSeats(s: Pick<CourseSection, "seatsRemaining" | "waitlistCount">): number {
+  return (s.waitlistCount ?? 0) > 0 ? 0 : s.seatsRemaining;
+}
+
 export function sectionIsOpen(s: CourseSection): boolean {
-  return s.seatsRemaining > 0 && !sectionHasWaitlist(s);
+  return openSeats(s) > 0;
 }
 
 export function sectionHasWaitlist(s: CourseSection): boolean {
   return (s.waitlistCount ?? 0) > 0;
 }
 
-/** `Waitlist 7/10` (count/capacity), or null when the section has no waitlist capacity. */
+/**
+ * `Waitlist 7/10` (count/capacity). With people waiting but no capacity reported, `Waitlist 7`.
+ * Null when the section has no waitlist.
+ */
 export function waitlistLabel(s: CourseSection): string | null {
-  return (s.waitlistCapacity ?? 0) > 0 ? `Waitlist ${s.waitlistCount ?? 0}/${s.waitlistCapacity}` : null;
+  const count = s.waitlistCount ?? 0;
+  if ((s.waitlistCapacity ?? 0) > 0) return `Waitlist ${count}/${s.waitlistCapacity}`;
+  return count > 0 ? `Waitlist ${count}` : null;
 }
 
 /** Fills waitlist numbers missing from catalogs saved before they were recorded. */
@@ -616,7 +628,7 @@ export function scheduleSummary(s: CourseSection): string {
 }
 
 export function seatsLabel(s: CourseSection): string {
-  return `${Math.max(0, s.seatsRemaining)} of ${s.seatCapacity} seats`;
+  return `${Math.max(0, openSeats(s))} of ${s.seatCapacity} seats`;
 }
 
 export function sectionsConflict(a: CourseSection, b: CourseSection): boolean {

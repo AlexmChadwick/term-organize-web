@@ -34,9 +34,15 @@ export function sectionHref(term: string, crn: string): string {
   return `/section/${term}/${encodeURIComponent(crn)}`;
 }
 
+/**
+ * `remaining` is the raw seat count. A waitlisted section is never shown open: it reads
+ * Full with no seats, otherwise "0 of N open" in the waitlist tone. The `Waitlist n/cap`
+ * fact sits beside it, so the word is not repeated here.
+ */
 export function SeatText({ remaining, capacity, waitlisted = false }: { remaining: number; capacity: number; waitlisted?: boolean }) {
   const tone = seatTone(remaining, capacity, waitlisted);
-  const text = tone === "waitlist" ? "Waitlist" : `${Math.max(0, remaining)} of ${capacity} open`;
+  const open = waitlisted ? 0 : Math.max(0, remaining);
+  const text = tone === "full" && capacity > 0 ? "Full" : `${open} of ${capacity} open`;
   return <span className={`seat-${tone}`}>{text}</span>;
 }
 
