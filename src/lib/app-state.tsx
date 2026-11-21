@@ -5,7 +5,7 @@ import { refreshCreditsFromCatalog } from "@/lib/credit-sync";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
 import type { Course, CourseKey, CourseSection, Term, TermCatalog } from "@/lib/models";
-import { catalogIsNewer, courseKeyOf, keyId, sameKey, termName } from "@/lib/models";
+import { catalogIsNewer, courseKeyOf, keyId, sameKey, sectionHasWaitlist, termName } from "@/lib/models";
 import { emptyPreferences } from "@/lib/preferences";
 import {
   emptyPlanFilters,
@@ -379,7 +379,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       courseTitle: section.title,
       sectionLabel: `${section.classType} ${section.sectionNumber}`.trim(),
       addedAt: Date.now(),
-      lastSeatsRemaining: section.seatsRemaining,
+      lastSeatsRemaining: sectionHasWaitlist(section) ? 0 : section.seatsRemaining,
       lastWaitlistRemaining: section.waitlistRemaining,
       seatCapacity: section.seatCapacity,
       lastCheckedAt: Date.now(),

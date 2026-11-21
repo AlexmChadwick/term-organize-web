@@ -557,8 +557,28 @@ export function sectionKey(s: Pick<CourseSection, "subject" | "number">): Course
   return { subject: s.subject, number: s.number };
 }
 
+/** Freed seats go to the waitlist first, so a section with a waitlist is not open. */
 export function sectionIsOpen(s: CourseSection): boolean {
-  return s.seatsRemaining > 0;
+  return s.seatsRemaining > 0 && !sectionHasWaitlist(s);
+}
+
+export function sectionHasWaitlist(s: CourseSection): boolean {
+  return (s.waitlistCount ?? 0) > 0;
+}
+
+/** `Waitlist 7/10` (count/capacity), or null when the section has no waitlist capacity. */
+export function waitlistLabel(s: CourseSection): string | null {
+  return (s.waitlistCapacity ?? 0) > 0 ? `Waitlist ${s.waitlistCount ?? 0}/${s.waitlistCapacity}` : null;
+}
+
+/** Fills waitlist numbers missing from catalogs saved before they were recorded. */
+export function normalizeWaitlist(catalog: TermCatalog): TermCatalog {
+  for (const s of catalog.sections) {
+    s.waitlistCapacity ??= 0;
+    s.waitlistCount ??= 0;
+    s.waitlistRemaining ??= 0;
+  }
+  return catalog;
 }
 
 export function sectionIsOnline(s: CourseSection): boolean {
@@ -605,8 +625,9 @@ export function sectionsConflict(a: CourseSection, b: CourseSection): boolean {
   return mine.some((m) => theirs.some((o) => meetingOverlaps(m, o)));
 }
 
-export function seatTone(remaining: number, capacity: number): "open" | "low" | "full" {
+export function seatTone(remaining: number, capacity: number, waitlisted = false): "open" | "low" | "full" | "waitlist" {
   if (remaining <= 0) return "full";
+  if (waitlisted) return "waitlist";
   if (capacity <= 0) return "open";
   const fraction = remaining / capacity;
   return fraction <= 0.1 || remaining <= 2 ? "low" : "open";

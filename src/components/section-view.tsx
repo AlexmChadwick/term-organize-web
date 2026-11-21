@@ -4,7 +4,7 @@ import { SeatText, courseHref } from "@/components/bits";
 import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { pinSectionOnPlan } from "@/lib/schedule/pins";
-import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLocation, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, seatsLabel, weeklyMeetings } from "@/lib/models";
+import { finalExam, instructorDisplayName, instructorLabel, keyId, meetingLocation, meetingLongLocation, meetingTimeLabel, dayShortLabel, scheduleSummary, sectionHasWaitlist, seatsLabel, waitlistLabel, weeklyMeetings } from "@/lib/models";
 import { sectionCpsNote } from "@/lib/restrictions";
 import Link from "next/link";
 import { useEffect } from "react";
@@ -59,12 +59,10 @@ export function SectionView({ term, crn }: { term: string; crn: string }) {
         <p className="text-lg">{scheduleSummary(section)}</p>
         <p className="mt-1 text-sm text-muted">{weeklyMeetings(section).map((meeting) => meetingLocation(meeting)).join(" · ") || "Location TBA"}</p>
         <p className="mt-3">
-          <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
+          <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} waitlisted={sectionHasWaitlist(section)} />
           <span className="text-muted"> · {seatsLabel(section)}</span>
         </p>
-        {section.waitlistCapacity > 0 ? (
-          <p className="text-sm text-muted">Waitlist {section.waitlistCount} enrolled, {section.waitlistRemaining} spots left of {section.waitlistCapacity}.</p>
-        ) : null}
+        {waitlistLabel(section) ? <p className="text-sm text-muted">{waitlistLabel(section)}</p> : null}
         <div className="mt-4 flex flex-wrap gap-2">
           <Button type="button" onClick={() => addCourseToPlan(key)}>Add course</Button>
           <Button

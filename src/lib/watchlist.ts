@@ -12,7 +12,7 @@
  */
 
 import type { CourseKey, CourseSection } from "./models";
-import { keyId } from "./models";
+import { keyId, sectionHasWaitlist } from "./models";
 import type { WatchItem } from "./user";
 import { watchId } from "./user";
 
@@ -61,16 +61,18 @@ export function compareWatchlist(
       updated[index] = { ...item, lastCheckedAt: now };
       return;
     }
-    const seatsOpened = item.lastSeatsRemaining <= 0 && section.seatsRemaining > 0;
+    // Freed seats go to the waitlist first, so a waitlisted section has no open seats.
+    const seats = sectionHasWaitlist(section) ? 0 : section.seatsRemaining;
+    const seatsOpened = item.lastSeatsRemaining <= 0 && seats > 0;
     const waitlistOpened =
       item.notifyOnWaitlist &&
       !seatsOpened &&
-      section.seatsRemaining <= 0 &&
+      seats <= 0 &&
       item.lastWaitlistRemaining <= 0 &&
       section.waitlistRemaining > 0;
     const next: WatchItem = {
       ...item,
-      lastSeatsRemaining: section.seatsRemaining,
+      lastSeatsRemaining: seats,
       lastWaitlistRemaining: section.waitlistRemaining,
       seatCapacity: section.seatCapacity,
       lastCheckedAt: now,
