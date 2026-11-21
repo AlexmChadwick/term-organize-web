@@ -12,6 +12,7 @@
  */
 
 import { decodeEntities, plainText, tableRows } from "./html";
+import { publishedInstructorEmail } from "./instructor-email";
 import type { AttributeInfo, Campus, Course, CourseKey, CourseSection, Instructor, Meeting, Requisite, Subject, Term, TermCatalog } from "./models";
 import { HONORS_ATTRIBUTE, compareCourseKeys, keyId, minutesFromHHMM, recomputePostreqs, reqAnd, reqCourse, simplifyRequisite } from "./models";
 import { bannerCreditBounds } from "./variable-credits";
@@ -364,7 +365,7 @@ function facultyToInstructor(f: {
 }): Instructor | null {
   const name = blank(f.displayName ? decodeEntities(decodeEntities(f.displayName)) : undefined);
   if (!name) return null;
-  return { name, primary: f.primaryIndicator ?? false, email: blank(f.emailAddress) ?? null };
+  return { name, primary: f.primaryIndicator ?? false, email: publishedInstructorEmail(f.emailAddress ?? "") ?? null };
 }
 
 export function sectionsFromBanner(banner: BannerSection[], previous: Map<string, CourseSection> = new Map()): CourseSection[] {

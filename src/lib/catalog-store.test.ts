@@ -3,7 +3,8 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "./catalog-index";
-import { loadBundledCatalog, normalizeBundledCatalog, publishedInstructorEmail } from "./catalog-store";
+import { loadBundledCatalog, normalizeBundledCatalog } from "./catalog-store";
+import { publishedInstructorEmail } from "./instructor-email";
 import type { CourseSection, Instructor, TermCatalog } from "./models";
 
 const EXACT_WORK_EMAIL = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
@@ -44,15 +45,48 @@ describe("bundled catalog emails", () => {
   });
 });
 
-/** Literal address candidate: keeps non-ASCII characters in the domain. A sentence-ending dot in prose is stripped before the domain check; email fields get no such leniency. */
+/** Literal address candidate: keeps non-ASCII characters in the domain. */
 const CANDIDATE = /[^\s@<>,;"'()[\]]+@[^\s@<>,;"'()[\]]+/g;
 /** Escaped forms such as name [at] example [dot] com or name(at)example(dot)com. */
-const OBFUSCATED = /[\[({]\s*(?:at|dot)\s*[\])}]/i;
+const BRACKETED = /[\[({]\s*(?:at|dot)\s*[\])}]/i;
+/** Plain word forms: "jo at example dot org", "jo at example.org", "example dot org". */
+const WORDED = [/\bat\s+[\w-]+\s+dot\s+[a-z]{2,}/i, /\w\s+at\s+(?![^\s@]*@)[\w-]+\.[a-z]{2,}\b/i, /\w\s+dot\s+(?:edu|com|org|net|gov|io)\b/i];
 const ALLOWED = /^[^\s@]+@(?:northeastern\.edu|neu\.edu)$/i;
 
 function allowedAddress(candidate: string): boolean {
   const domain = candidate.slice(candidate.lastIndexOf("@") + 1);
   return /^[\x21-\x7e]+$/.test(domain) && ALLOWED.test(candidate);
+}
+
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", commat: "@", period: ".", nbsp: " " };
+
+function unescapeHtml(text: string): string {
+  return text.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (whole, dec?: string, hex?: string, name?: string) => {
+    if (dec || hex) {
+      const code = dec ? Number(dec) : parseInt(hex!, 16);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    }
+    return NAMED_ENTITIES[name!.toLowerCase()] ?? whole;
+  });
+}
+
+function percentDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+  }
+}
+
+/** Decode layers until stable (bounded), then NFKC, so entity, percent and fullwidth forms are scanned as plain text. */
+function canonicalText(text: string): string {
+  let current = text;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = percentDecode(unescapeHtml(current)).normalize("NFKC");
+    if (next === current) break;
+    current = next;
+  }
+  return current;
 }
 
 /** Problems in a parsed catalog payload, found without the runtime sanitizer. */
@@ -63,18 +97,25 @@ function emailProblems(value: unknown, key = ""): string[] {
   }
   if (typeof value !== "string") return [];
   if (key === "email") {
-    return value.split(/[\s,;<>]+/).filter(Boolean).filter((part) => !allowedAddress(part)).map((part) => `email field: ${part}`);
+    // Strict: no leading or trailing whitespace, exactly one space between addresses.
+    return value.split(" ").filter((part) => !allowedAddress(part)).map((part) => `email field: ${JSON.stringify(part)} in ${JSON.stringify(value)}`);
   }
-  const problems = (value.match(CANDIDATE) ?? []).filter((part) => !allowedAddress(part.replace(/^mailto:/i, "").replace(/[.:!?]+$/, ""))).map((part) => `${key}: ${part}`);
-  if (OBFUSCATED.test(value)) problems.push(`${key}: obfuscated ${value.slice(0, 60)}`);
+  const text = canonicalText(value);
+  // Prose: one sentence-ending period is punctuation; anything else must pass the strict validator.
+  const problems = (text.match(CANDIDATE) ?? [])
+    .filter((part) => !allowedAddress(part.replace(/^mailto:/i, "").replace(/\.$/, "")))
+    .map((part) => `${key}: ${part}`);
+  if (BRACKETED.test(text) || WORDED.some((pattern) => pattern.test(text))) problems.push(`${key}: obfuscated ${text.slice(0, 60)}`);
   return problems;
 }
 
 describe("raw catalog email check", () => {
   const record = (email: string, extra: Record<string, unknown> = {}) => ({ sections: [{ instructors: [{ name: "X", email }], ...extra }] });
+  const prose = (description: string) => emailProblems(record("a@neu.edu", { description }));
 
   it("accepts allowed addresses", () => {
     expect(emailProblems(record("A.b+c!d@Northeastern.EDU neu@neu.edu", { description: "Write to info@northeastern.edu." }))).toEqual([]);
+    expect(prose("Meets at the library. Ask at the desk.")).toEqual([]);
   });
 
   it("catches a student-domain address", () => {
@@ -82,15 +123,45 @@ describe("raw catalog email check", () => {
   });
 
   it("catches an obfuscated external address in a non-email string", () => {
-    expect(emailProblems(record("a@neu.edu", { description: "Contact jo [at] example [dot] org" })).length).toBeGreaterThan(0);
+    expect(prose("Contact jo [at] example [dot] org").length).toBeGreaterThan(0);
     expect(emailProblems(record("a@neu.edu", { notes: "jo(at)example(dot)org" })).length).toBeGreaterThan(0);
+  });
+
+  it("catches plain ' at ' / ' dot ' obfuscation", () => {
+    expect(prose("mail jo at example dot org").length).toBeGreaterThan(0);
+    expect(prose("mail jo at example.org").length).toBeGreaterThan(0);
+  });
+
+  it("catches entity, percent and fullwidth encoded addresses", () => {
+    expect(prose("jo&#64;example.org").length).toBeGreaterThan(0);
+    expect(prose("jo&#x40;example.org").length).toBeGreaterThan(0);
+    expect(prose("jo%40example.org").length).toBeGreaterThan(0);
+    expect(prose("jo\uff20example.org").length).toBeGreaterThan(0);
+    expect(prose("jo@example&period;org").length).toBeGreaterThan(0);
+  });
+
+  it("allows encoded allowed addresses", () => {
+    expect(prose("jo&#64;neu.edu and jo%40northeastern.edu.")).toEqual([]);
   });
 
   it("catches an allowed domain with a trailing dot or non-ASCII suffix", () => {
     expect(emailProblems(record("person@northeastern.edu."))).toHaveLength(1);
     expect(emailProblems(record("person@neu.edu.", {}))).toHaveLength(1);
     expect(emailProblems(record("person@neu.edué"))).toHaveLength(1);
-    expect(emailProblems(record("a@neu.edu", { description: "mail person@northeastern.edu.evil.com today" })).length).toBeGreaterThan(0);
+    expect(prose("mail person@northeastern.edu.evil.com today").length).toBeGreaterThan(0);
+  });
+
+  it("strips exactly one sentence period in prose and nothing else", () => {
+    expect(prose("mail x@neu.edu.")).toEqual([]);
+    expect(prose("mail x@neu.edu..").length).toBeGreaterThan(0);
+    expect(prose("mail x@neu.edu!").length).toBeGreaterThan(0);
+  });
+
+  it("rejects whitespace around email field values", () => {
+    for (const bad of ["x@neu.edu\n", "x@neu.edu ", " x@neu.edu", "\nx@neu.edu", "x@neu.edu\t", "x@neu.edu  y@neu.edu", "x@neu.edu\ny@neu.edu"]) {
+      expect(emailProblems(record(bad)).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    }
+    expect(emailProblems(record("x@neu.edu y@neu.edu"))).toEqual([]);
   });
 });
 

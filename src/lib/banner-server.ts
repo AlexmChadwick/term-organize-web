@@ -10,7 +10,8 @@
 import path from "node:path";
 import { catalogCodesContain, mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parseMutualExclusions, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
 import { parseRestrictions } from "./restrictions";
-import { listStoredTermCodes, loadBestCatalog, normalizeBundledCatalog, publishedInstructorEmail, saveBuiltCatalog } from "./catalog-store";
+import { listStoredTermCodes, loadBestCatalog, normalizeBundledCatalog, saveBuiltCatalog } from "./catalog-store";
+import { publishedInstructorEmail } from "./instructor-email";
 import type { CourseInfo } from "./course-info";
 import { OfferingHistory } from "./degree/reordering";
 import { decodeEntities } from "./html";
