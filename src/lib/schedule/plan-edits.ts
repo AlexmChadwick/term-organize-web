@@ -22,6 +22,7 @@ import {
   parseCourseKey,
   rangeLabel,
   sameKey,
+  waitlistLabel,
   weeklyMeetings,
 } from "@/lib/models";
 import type { BlockedTime } from "@/lib/preferences";
@@ -309,7 +310,8 @@ export function scheduleNotices(resolved: ResolvedPlan, termName: string, catalo
       severity: "warning",
       title: resolved.fullSections.length === 1 ? "1 section is full" : `${resolved.fullSections.length} sections are full`,
       lines: resolved.fullSections.map(({ section }) => {
-        const waitlist = section.waitlistCapacity > 0 ? ` ${DOT} ${section.waitlistRemaining} waitlist spots left` : "";
+        const label = waitlistLabel(section);
+        const waitlist = label ? ` ${DOT} ${label}` : "";
         return `${keyId({ subject: section.subject, number: section.number })} ${sectionTitle(section)} is full${waitlist}`;
       }),
       fix: null,

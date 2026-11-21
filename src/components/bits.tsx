@@ -19,7 +19,9 @@ import {
   meetingTimeLabel,
   nupathsFromAttributes,
   scheduleSummary,
+  sectionHasWaitlist,
   seatTone,
+  waitlistLabel,
   weeklyMeetings,
 } from "@/lib/models";
 import Link from "next/link";
@@ -32,9 +34,16 @@ export function sectionHref(term: string, crn: string): string {
   return `/section/${term}/${encodeURIComponent(crn)}`;
 }
 
-export function SeatText({ remaining, capacity }: { remaining: number; capacity: number }) {
-  const tone = seatTone(remaining, capacity);
-  return <span className={tone === "open" ? "seat-open" : tone === "low" ? "seat-low" : "seat-full"}>{`${Math.max(0, remaining)} of ${capacity} open`}</span>;
+/**
+ * `remaining` is the raw seat count. A waitlisted section is never shown open: it reads
+ * Full with no seats, otherwise "0 of N open" in the waitlist tone. The `Waitlist n/cap`
+ * fact sits beside it, so the word is not repeated here.
+ */
+export function SeatText({ remaining, capacity, waitlisted = false }: { remaining: number; capacity: number; waitlisted?: boolean }) {
+  const tone = seatTone(remaining, capacity, waitlisted);
+  const open = waitlisted ? 0 : Math.max(0, remaining);
+  const text = tone === "full" && capacity > 0 ? "Full" : `${open} of ${capacity} open`;
+  return <span className={`seat-${tone}`}>{text}</span>;
 }
 
 export function NuChips({ attributes }: { attributes: string[] }) {
@@ -227,8 +236,8 @@ export function SectionFacts({ section }: { section: CourseSection }) {
       <div>{scheduleSummary(section)}</div>
       <div>{instructorLabel(section)}</div>
       <div>
-        <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
-        {section.waitlistCapacity > 0 ? ` · waitlist ${section.waitlistRemaining} of ${section.waitlistCapacity}` : ""}
+        <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} waitlisted={sectionHasWaitlist(section)} />
+        {waitlistLabel(section) ? ` · ${waitlistLabel(section)}` : ""}
       </div>
     </div>
   );

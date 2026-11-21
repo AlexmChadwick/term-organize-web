@@ -26,6 +26,7 @@ import {
   emptyScheduleFilters,
   keyId,
   meetingOverlaps,
+  openSeats,
   sameKey,
   sectionIsOnline,
   weeklyMeetings,
@@ -191,8 +192,8 @@ export function rejectionReasons(
   }
   if (!filters.includeHonors && section.honors) reasons |= filterReasonBit("honors");
   if (!filters.includeOnline && sectionIsOnline(section)) reasons |= filterReasonBit("online");
-  if (filters.hideFullSections && section.seatsRemaining <= 0) reasons |= filterReasonBit("seats");
-  if (filters.minSeats > 0 && section.seatsRemaining < filters.minSeats) reasons |= filterReasonBit("seats");
+  if (filters.hideFullSections && openSeats(section) <= 0) reasons |= filterReasonBit("seats");
+  if (filters.minSeats > 0 && openSeats(section) < filters.minSeats) reasons |= filterReasonBit("seats");
   if (filters.campus != null && !sectionIsOnline(section) && !sectionHasNoCampus(section) && section.campus !== filters.campus) {
     reasons |= filterReasonBit("campus");
   }
@@ -344,7 +345,7 @@ export class GeneratedSchedule {
       const own = intervalsFor(section, buildings);
       intervals.push(...own);
       if (usePrefs) points += sectionScore(section, own, preferences);
-      const seats = Math.max(0, section.seatsRemaining);
+      const seats = Math.max(0, openSeats(section));
       minSeats = Math.min(minSeats, seats);
       totalSeats += seats;
       if (seats === 0) full += 1;
@@ -1010,7 +1011,7 @@ function run(
     slots.map((slot) => slot.start),
     intervalStart,
     intervals,
-    sections.map((section) => Math.max(0, section.seatsRemaining)),
+    sections.map((section) => Math.max(0, openSeats(section))),
     sectionPoints,
     scoreWeightsFor(preferences),
     measureOptionsFor(preferences),

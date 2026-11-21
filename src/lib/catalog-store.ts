@@ -2,18 +2,18 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { publishedInstructorEmail } from "./instructor-email";
-import type { Instructor, TermCatalog } from "./models";
+import { normalizeWaitlist, type Instructor, type TermCatalog } from "./models";
 
 const memory = new Map<string, TermCatalog>();
 
 /** Filters instructor emails while preserving omitted and null fields. */
 export function normalizeBundledCatalog(catalog: TermCatalog): TermCatalog {
-  return {
+  return normalizeWaitlist({
     ...catalog,
     sections: catalog.sections.map((section) => section.instructors
       ? { ...section, instructors: section.instructors.map(normalizeInstructor) }
       : section),
-  };
+  });
 }
 
 function normalizeInstructor(instructor: Instructor): Instructor {

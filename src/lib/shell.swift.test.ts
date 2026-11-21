@@ -66,7 +66,7 @@ function section(crn = "12345", seats = 0, waitlist = 0, capacity = 40): CourseS
     seatsRemaining: seats,
     enrollment: capacity - seats,
     waitlistCapacity: 10,
-    waitlistCount: 10 - waitlist,
+    waitlistCount: seats > 0 ? 0 : 10 - waitlist,
     waitlistRemaining: waitlist,
     classType: "Lecture",
     honors: false,

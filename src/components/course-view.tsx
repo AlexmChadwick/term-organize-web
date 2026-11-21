@@ -6,7 +6,7 @@ import { Button } from "@/components/ui";
 import { useApp } from "@/lib/app-state";
 import { courseInfoCreditsLabel } from "@/lib/degree-logic";
 import type { Course, CourseKey, CourseSection } from "@/lib/models";
-import { courseKeyOf, creditsLabel, instructorLabel, keyId, nupathsFromAttributes, offeringTermLabel, referencedCourses, requisiteSummary, scheduleSummary, seatsLabel } from "@/lib/models";
+import { courseKeyOf, creditsLabel, instructorLabel, keyId, nupathsFromAttributes, offeringTermLabel, referencedCourses, requisiteSummary, scheduleSummary, sectionHasWaitlist, seatsLabel, waitlistLabel } from "@/lib/models";
 import { retryCourseFacts, useCourseFacts, type CatalogEntry } from "@/lib/plan-course-info";
 import { courseCpsNote, sectionCpsNote } from "@/lib/restrictions";
 import { sortedSections as sortSections, type CatalogIndex } from "@/lib/catalog-index";
@@ -192,7 +192,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
   );
 }
 
-function SectionsGrid({
+export function SectionsGrid({
   term,
   sections,
   isWatched,
@@ -263,8 +263,8 @@ function SectionsGrid({
                     )}
                   </td>
                   <td role="gridcell">
-                    <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
-                    <div className="text-xs text-muted">{seatsLabel(section)}</div>
+                    <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} waitlisted={sectionHasWaitlist(section)} />
+                    <div className="text-xs text-muted">{[seatsLabel(section), waitlistLabel(section)].filter(Boolean).join(" · ")}</div>
                   </td>
                   <td role="gridcell">
                     <Button
@@ -287,7 +287,7 @@ function SectionsGrid({
   );
 }
 
-function SectionDetails({ term, section }: { term: string; section: CourseSection | null }) {
+export function SectionDetails({ term, section }: { term: string; section: CourseSection | null }) {
   if (!section) {
     return (
       <aside className="card p-4 text-sm text-muted" aria-label="Section details">
@@ -305,7 +305,8 @@ function SectionDetails({ term, section }: { term: string; section: CourseSectio
       <p className="text-sm">{scheduleSummary(section)}</p>
       <p className="text-sm text-muted">{instructorLabel(section)}</p>
       <p className="text-sm">
-        <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} />
+        <SeatText remaining={section.seatsRemaining} capacity={section.seatCapacity} waitlisted={sectionHasWaitlist(section)} />
+        {waitlistLabel(section) ? <span className="text-muted"> · {waitlistLabel(section)}</span> : null}
       </p>
       {note ? <p className="text-xs text-muted">{note}</p> : null}
       <Link className="text-sm underline" href={sectionHref(term, section.crn)}>

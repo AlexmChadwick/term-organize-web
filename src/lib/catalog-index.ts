@@ -22,6 +22,7 @@ import {
   recomputePostreqs,
   sameKey,
   sectionIsOnline,
+  openSeats,
   sectionIsOpen,
   sectionKey,
   weeklyMeetings,
@@ -74,7 +75,7 @@ export function makeStats(list: CourseSection[]): CourseStats {
   for (const s of list) {
     st.sectionCount++;
     if (sectionIsOpen(s)) st.openSectionCount++;
-    st.seatsRemaining += Math.max(0, s.seatsRemaining);
+    st.seatsRemaining += Math.max(0, openSeats(s));
     st.seatCapacity += s.seatCapacity;
     if (s.waitlistRemaining > 0) st.waitlistOpenCount++;
     if (s.campus) campuses.add(s.campus);

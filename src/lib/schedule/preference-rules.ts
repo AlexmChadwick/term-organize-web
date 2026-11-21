@@ -14,6 +14,7 @@ import {
   daysDisjoint,
   instructorDisplayName,
   meetingIsOnline,
+  openSeats,
   sectionIsOnline,
   timeLabel,
   weeklyMeetings,
@@ -109,7 +110,7 @@ export function sectionHasNoCampus(section: CourseSection): boolean {
  * (independent study) are never full.
  */
 export function sectionIsFull(section: CourseSection): boolean {
-  return section.seatCapacity > 0 && section.seatsRemaining <= 0;
+  return section.seatCapacity > 0 && openSeats(section) <= 0;
 }
 
 /**

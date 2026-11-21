@@ -12,9 +12,26 @@
  */
 
 import type { CourseKey, CourseSection } from "./models";
-import { keyId } from "./models";
+import { keyId, openSeats } from "./models";
 import type { WatchItem } from "./user";
 import { watchId } from "./user";
+
+/** A new watch, seeded with open seats so a queued section alerts only once seats truly open. */
+export function newWatchItem(section: CourseSection, termCode: string, now: number): WatchItem {
+  return {
+    termCode,
+    crn: section.crn,
+    courseKey: { subject: section.subject, number: section.number },
+    courseTitle: section.title,
+    sectionLabel: `${section.classType} ${section.sectionNumber}`.trim(),
+    addedAt: now,
+    lastSeatsRemaining: openSeats(section),
+    lastWaitlistRemaining: section.waitlistRemaining,
+    seatCapacity: section.seatCapacity,
+    lastCheckedAt: now,
+    notifyOnWaitlist: true,
+  };
+}
 
 export interface WatchAlert {
   kind: "seats" | "waitlist";
@@ -61,16 +78,18 @@ export function compareWatchlist(
       updated[index] = { ...item, lastCheckedAt: now };
       return;
     }
-    const seatsOpened = item.lastSeatsRemaining <= 0 && section.seatsRemaining > 0;
+    // Freed seats go to the waitlist first, so a waitlisted section has no open seats.
+    const seats = openSeats(section);
+    const seatsOpened = item.lastSeatsRemaining <= 0 && seats > 0;
     const waitlistOpened =
       item.notifyOnWaitlist &&
       !seatsOpened &&
-      section.seatsRemaining <= 0 &&
+      seats <= 0 &&
       item.lastWaitlistRemaining <= 0 &&
       section.waitlistRemaining > 0;
     const next: WatchItem = {
       ...item,
-      lastSeatsRemaining: section.seatsRemaining,
+      lastSeatsRemaining: seats,
       lastWaitlistRemaining: section.waitlistRemaining,
       seatCapacity: section.seatCapacity,
       lastCheckedAt: now,

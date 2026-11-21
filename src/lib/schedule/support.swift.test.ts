@@ -125,7 +125,7 @@ describe("ScheduleSupportTests", () => {
     expect(notices[0]?.severity).toBe("error");
     expect(notices[0]?.title).toBe("1 time conflict");
     expect(notices[0]?.lines[0]?.includes("CS 3000 overlaps MATH 2331")).toBe(true);
-    expect(notices[1]?.lines).toEqual(["MATH 2331 Lecture 01 is full \u00b7 5 waitlist spots left"]);
+    expect(notices[1]?.lines).toEqual(["MATH 2331 Lecture 01 is full \u00b7 Waitlist 0/5"]);
     expect(notices.every((item) => item.fix == null)).toBe(true);
   });
 
