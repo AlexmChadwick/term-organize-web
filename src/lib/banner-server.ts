@@ -10,7 +10,8 @@
 import path from "node:path";
 import { catalogCodesContain, mergeCatalog, parseCatalogDetails, parseCorequisites, parseDescription, parseMutualExclusions, parsePrerequisites, sectionsFromBanner, subjectLookup, type BannerSection } from "./banner";
 import { parseRestrictions } from "./restrictions";
-import { listStoredTermCodes, loadBestCatalog, saveBuiltCatalog } from "./catalog-store";
+import { listStoredTermCodes, loadBestCatalog, normalizeBundledCatalog, saveBuiltCatalog } from "./catalog-store";
+import { publishedInstructorEmail } from "./instructor-email";
 import type { CourseInfo } from "./course-info";
 import { OfferingHistory } from "./degree/reordering";
 import { decodeEntities } from "./html";
@@ -214,14 +215,14 @@ async function buildTermCatalogOnce(termCode: string, refreshDetails: boolean): 
   ]);
   const sections = await fetchAllSections(termCode);
   const stored = await loadBestCatalog(termCode);
-  const catalog = mergeCatalog({
+  const catalog = normalizeBundledCatalog(mergeCatalog({
     existing: refreshDetails && stored ? clearCourseDetails(stored) : stored,
     fresh: sections,
     term,
     subjects,
     campuses,
     attributes,
-  });
+  }));
   await saveBuiltCatalog(catalog);
   return catalog;
 }
@@ -508,7 +509,7 @@ export async function refreshCourse(term: string, subject: string, number: strin
         const name = f.displayName?.trim();
         if (!name || seen.has(name)) return [];
         seen.add(name);
-        return [{ name: decodeEntities(decodeEntities(name)), primary: !!f.primaryIndicator, email: f.emailAddress ?? null }];
+        return [{ name: decodeEntities(decodeEntities(name)), primary: !!f.primaryIndicator, email: publishedInstructorEmail(f.emailAddress ?? "") ?? null }];
       });
       if (instructors.length) {
         for (const section of sections) {
