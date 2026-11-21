@@ -1,14 +1,27 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SeatText, SectionFacts } from "@/components/bits";
+import { SectionDetails, SectionsGrid } from "@/components/course-view";
+import { SectionView } from "@/components/section-view";
 import { sectionsFromBanner, type BannerSection } from "./banner";
 import { makeStats } from "./catalog-index";
-import { openSeats, sectionIsOpen, type CourseSection, type ScheduleFilters } from "./models";
+import { openSeats, sectionChoice, sectionIsOpen, sectionMatchesFilters, seatsLabel, type SearchFilters, type CourseSection, type ScheduleFilters } from "./models";
 import { emptyPreferences } from "./preferences";
-import { generateSchedules, rejectionReasons } from "./schedule/generator";
+import { GeneratedSchedule, generateSchedules, rejectionReasons } from "./schedule/generator";
 import { preferenceRejectionBits, sectionIsFull } from "./schedule/preference-rules";
 import { newWatchItem } from "./watchlist";
+
+let appSection: CourseSection | undefined;
+vi.mock("@/lib/app-state", () => ({
+  useApp: () => ({
+    index: { catalog: { term: { code: "202730" } }, sectionByCRN: () => appSection },
+    termCode: "202730",
+    setTermCode: () => {},
+    isWatched: () => false,
+    plan: null,
+  }),
+}));
 
 function sectionOf(partial: Partial<BannerSection>): CourseSection {
   return sectionsFromBanner(
@@ -109,5 +122,53 @@ describe("generator and preferences", () => {
     expect(preferenceRejectionBits(open, prefs)).toBe(0);
     expect(sectionIsFull(queued)).toBe(true);
     expect(sectionIsFull(open)).toBe(false);
+  });
+});
+
+describe("waitlisted flag in every component", () => {
+  it("course section rows read 0 of 15 open and waitlist toned", () => {
+    const out = renderToStaticMarkup(createElement(SectionsGrid, { term: "202730", sections: [queued], isWatched: () => false, onWatch: () => {} }));
+    expect(out).toContain("seat-waitlist");
+    expect(out).toContain("0 of 15 open");
+  });
+
+  it("the course section details read 0 of 15 open and waitlist toned", () => {
+    const out = renderToStaticMarkup(createElement(SectionDetails, { term: "202730", section: queued }));
+    expect(out).toContain("seat-waitlist");
+    expect(out).toContain("0 of 15 open");
+  });
+
+  it("the section page reads 0 of 15 open and waitlist toned", () => {
+    appSection = queued;
+    const out = renderToStaticMarkup(createElement(SectionView, { term: "202730", crn: queued.crn }));
+    expect(out).toContain("seat-waitlist");
+    expect(out).toContain("0 of 15 open");
+  });
+});
+
+describe("raw seat reads", () => {
+  const searchFilters = (over: Partial<SearchFilters>): SearchFilters => ({ subjects: [], nupaths: [], levels: [], campuses: [], classTypes: [], honorsOnly: false, openSeatsOnly: false, noPrerequisites: false, noCorequisites: false, instruction: "any", ...over });
+
+  it("the schedule picker line counts a queued section as 0 open", () => {
+    expect(sectionChoice(queued)).toContain(" · 0 open · Waitlist 3/10");
+    expect(sectionChoice(open)).toContain(" · 2 open");
+  });
+
+  it("the Open seats filter drops a queued section", () => {
+    expect(sectionMatchesFilters(queued, searchFilters({ openSeatsOnly: true }))).toBe(false);
+    expect(sectionMatchesFilters(open, searchFilters({ openSeatsOnly: true }))).toBe(true);
+  });
+
+  it("seatsLabel reads 0 of 15 seats for a queued section", () => {
+    expect(seatsLabel(queued)).toBe("0 of 15 seats");
+    expect(seatsLabel(open)).toBe("2 of 15 seats");
+  });
+
+  it("schedule seat measures count a queued section as 0", () => {
+    const measured = GeneratedSchedule.fromSections([queued]);
+    expect([measured.minSeats, measured.totalSeats]).toEqual([0, 0]);
+    const input = { key: { subject: "INAM", number: "1925" }, isRequired: true, sections: [queued] };
+    const [schedule] = generateSchedules([input], { freeDays: 0, includeHonors: true, includeOnline: true, hideFullSections: false, minSeats: 0 }).schedules;
+    expect([schedule?.minSeats, schedule?.totalSeats]).toEqual([0, 0]);
   });
 });

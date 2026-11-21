@@ -631,6 +631,13 @@ export function seatsLabel(s: CourseSection): string {
   return `${Math.max(0, openSeats(s))} of ${s.seatCapacity} seats`;
 }
 
+/** One line in the schedule section picker. */
+export function sectionChoice(section: CourseSection): string {
+  const when = scheduleSummary(section).replaceAll(" – ", "–");
+  const waitlist = waitlistLabel(section);
+  return `${section.crn} · ${when} · ${Math.max(0, openSeats(section))} open${waitlist ? ` · ${waitlist}` : ""}`;
+}
+
 export function sectionsConflict(a: CourseSection, b: CourseSection): boolean {
   const mine = weeklyMeetings(a);
   const theirs = weeklyMeetings(b);

@@ -192,7 +192,7 @@ export function CourseView({ term, subject, number }: { term: string; subject: s
   );
 }
 
-function SectionsGrid({
+export function SectionsGrid({
   term,
   sections,
   isWatched,
@@ -287,7 +287,7 @@ function SectionsGrid({
   );
 }
 
-function SectionDetails({ term, section }: { term: string; section: CourseSection | null }) {
+export function SectionDetails({ term, section }: { term: string; section: CourseSection | null }) {
   if (!section) {
     return (
       <aside className="card p-4 text-sm text-muted" aria-label="Section details">
