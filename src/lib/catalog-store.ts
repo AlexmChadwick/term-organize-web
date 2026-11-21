@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import type { Instructor, TermCatalog } from "./models";
+import { normalizeWaitlist, type Instructor, type TermCatalog } from "./models";
 
 const memory = new Map<string, TermCatalog>();
 
@@ -22,6 +22,7 @@ export function publishedInstructorEmail(email: string): string | undefined {
 
 /** Accepts instructors that omit `email` instead of writing null. */
 export function normalizeBundledCatalog(catalog: TermCatalog): TermCatalog {
+  normalizeWaitlist(catalog);
   for (const section of catalog.sections) {
     for (const instructor of section.instructors ?? []) {
       acceptInstructorEmail(instructor);
@@ -64,7 +65,7 @@ export async function loadBuiltCatalog(term: string): Promise<TermCatalog | null
   const cached = memory.get(`built:${term}`);
   if (cached) return cached;
   try {
-    const catalog = JSON.parse(await readFile(builtCatalogPath(term), "utf8")) as TermCatalog;
+    const catalog = normalizeWaitlist(JSON.parse(await readFile(builtCatalogPath(term), "utf8")) as TermCatalog);
     memory.set(`built:${term}`, catalog);
     return catalog;
   } catch {
@@ -133,5 +134,5 @@ export function encodeCatalogArchive(catalog: TermCatalog): Uint8Array {
 
 export function decodeCatalogArchive(data: Uint8Array): TermCatalog {
   if (data[0] !== 0x7b) throw new Error("Compressed catalog archives need the JSON form.");
-  return JSON.parse(new TextDecoder().decode(data)) as TermCatalog;
+  return normalizeWaitlist(JSON.parse(new TextDecoder().decode(data)) as TermCatalog);
 }

@@ -557,8 +557,40 @@ export function sectionKey(s: Pick<CourseSection, "subject" | "number">): Course
   return { subject: s.subject, number: s.number };
 }
 
+/**
+ * Seats a student can take now. Freed seats go to the waitlist first, so a section
+ * with a waitlist has none. Every openness check reads seats through this.
+ */
+export function openSeats(s: Pick<CourseSection, "seatsRemaining" | "waitlistCount">): number {
+  return (s.waitlistCount ?? 0) > 0 ? 0 : s.seatsRemaining;
+}
+
 export function sectionIsOpen(s: CourseSection): boolean {
-  return s.seatsRemaining > 0;
+  return openSeats(s) > 0;
+}
+
+export function sectionHasWaitlist(s: CourseSection): boolean {
+  return (s.waitlistCount ?? 0) > 0;
+}
+
+/**
+ * `Waitlist 7/10` (count/capacity). With people waiting but no capacity reported, `Waitlist 7`.
+ * Null when the section has no waitlist.
+ */
+export function waitlistLabel(s: CourseSection): string | null {
+  const count = s.waitlistCount ?? 0;
+  if ((s.waitlistCapacity ?? 0) > 0) return `Waitlist ${count}/${s.waitlistCapacity}`;
+  return count > 0 ? `Waitlist ${count}` : null;
+}
+
+/** Fills waitlist numbers missing from catalogs saved before they were recorded. */
+export function normalizeWaitlist(catalog: TermCatalog): TermCatalog {
+  for (const s of catalog.sections) {
+    s.waitlistCapacity ??= 0;
+    s.waitlistCount ??= 0;
+    s.waitlistRemaining ??= 0;
+  }
+  return catalog;
 }
 
 export function sectionIsOnline(s: CourseSection): boolean {
@@ -596,7 +628,7 @@ export function scheduleSummary(s: CourseSection): string {
 }
 
 export function seatsLabel(s: CourseSection): string {
-  return `${Math.max(0, s.seatsRemaining)} of ${s.seatCapacity} seats`;
+  return `${Math.max(0, openSeats(s))} of ${s.seatCapacity} seats`;
 }
 
 export function sectionsConflict(a: CourseSection, b: CourseSection): boolean {
@@ -605,8 +637,9 @@ export function sectionsConflict(a: CourseSection, b: CourseSection): boolean {
   return mine.some((m) => theirs.some((o) => meetingOverlaps(m, o)));
 }
 
-export function seatTone(remaining: number, capacity: number): "open" | "low" | "full" {
+export function seatTone(remaining: number, capacity: number, waitlisted = false): "open" | "low" | "full" | "waitlist" {
   if (remaining <= 0) return "full";
+  if (waitlisted) return "waitlist";
   if (capacity <= 0) return "open";
   const fraction = remaining / capacity;
   return fraction <= 0.1 || remaining <= 2 ? "low" : "open";

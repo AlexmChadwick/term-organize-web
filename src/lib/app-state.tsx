@@ -19,11 +19,10 @@ import {
   saveUserData,
   type SchedulePlan,
   type UserData,
-  type WatchItem,
 } from "@/lib/user";
 import { canPlacePlanCourse, mergeRefreshedSections } from "@/lib/schedule/pins";
 import { syncClosedAlerts } from "@/lib/push-client";
-import { compareWatchlist } from "@/lib/watchlist";
+import { compareWatchlist, newWatchItem } from "@/lib/watchlist";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 function missingDetails(catalog: TermCatalog): boolean {
@@ -372,19 +371,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const watchSection = useCallback((section: CourseSection) => {
-    const item: WatchItem = {
-      termCode,
-      crn: section.crn,
-      courseKey: { subject: section.subject, number: section.number },
-      courseTitle: section.title,
-      sectionLabel: `${section.classType} ${section.sectionNumber}`.trim(),
-      addedAt: Date.now(),
-      lastSeatsRemaining: section.seatsRemaining,
-      lastWaitlistRemaining: section.waitlistRemaining,
-      seatCapacity: section.seatCapacity,
-      lastCheckedAt: Date.now(),
-      notifyOnWaitlist: true,
-    };
+    const item = newWatchItem(section, termCode, Date.now());
     setUser((prev) => {
       const rest = prev.watchlist.filter((watched) => !(watched.termCode === termCode && watched.crn === section.crn));
       return { ...prev, watchlist: [item, ...rest] };
