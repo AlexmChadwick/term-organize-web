@@ -78,16 +78,19 @@ function percentDecode(text: string): string {
   }
 }
 
-/** Decode layers until stable (bounded), then NFKC, so entity, percent and fullwidth forms are scanned as plain text. */
-function canonicalText(text: string): string {
+/** Decode layers until stable (bounded) so entity and percent forms are scanned as plain text. NFKC is not applied here. */
+function decodeText(text: string): string {
   let current = text;
   for (let pass = 0; pass < 4; pass += 1) {
-    const next = percentDecode(unescapeHtml(current)).normalize("NFKC");
+    const next = percentDecode(unescapeHtml(current));
     if (next === current) break;
     current = next;
   }
   return current;
 }
+
+/** Candidate that also matches compatibility at signs, so NFKC-hidden addresses are found. */
+const FOLDING_CANDIDATE = /[^\s@\uff20\ufe6b<>,;"'()[\]]+[@\uff20\ufe6b][^\s@\uff20\ufe6b<>,;"'()[\]]+/g;
 
 /** Problems in a parsed catalog payload, found without the runtime sanitizer. */
 function emailProblems(value: unknown, key = ""): string[] {
@@ -100,9 +103,11 @@ function emailProblems(value: unknown, key = ""): string[] {
     // Strict: no leading or trailing whitespace, exactly one space between addresses.
     return value.split(" ").filter((part) => !allowedAddress(part)).map((part) => `email field: ${JSON.stringify(part)} in ${JSON.stringify(value)}`);
   }
-  const text = canonicalText(value);
+  const decoded = decodeText(value);
+  // NFKC only exposes hidden forms for the obfuscation checks; candidates are validated from the pre-NFKC string.
+  const text = decoded.normalize("NFKC");
   // Prose: one sentence-ending period is punctuation; anything else must pass the strict validator.
-  const problems = (text.match(CANDIDATE) ?? [])
+  const problems = (decoded.match(FOLDING_CANDIDATE) ?? [])
     .filter((part) => !allowedAddress(part.replace(/^mailto:/i, "").replace(/\.$/, "")))
     .map((part) => `${key}: ${part}`);
   if (BRACKETED.test(text) || WORDED.some((pattern) => pattern.test(text))) problems.push(`${key}: obfuscated ${text.slice(0, 60)}`);
@@ -125,6 +130,13 @@ describe("raw catalog email check", () => {
   it("catches an obfuscated external address in a non-email string", () => {
     expect(prose("Contact jo [at] example [dot] org").length).toBeGreaterThan(0);
     expect(emailProblems(record("a@neu.edu", { notes: "jo(at)example(dot)org" })).length).toBeGreaterThan(0);
+  });
+
+  it("catches lookalikes of an allowed domain that NFKC would fold to ASCII", () => {
+    expect(prose("jo@northea\u017ftern.edu").length).toBeGreaterThan(0);
+    expect(prose("jo@\uff4eeu.edu").length).toBeGreaterThan(0);
+    expect(prose("Write to jo@northea\u017ftern.edu.").length).toBeGreaterThan(0);
+    expect(prose("jo@northeastern.edu")).toEqual([]);
   });
 
   it("catches plain ' at ' / ' dot ' obfuscation", () => {

@@ -18,14 +18,14 @@ function json(body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json", ...headers } });
 }
 
-function mockBanner() {
+function mockBanner(searchFaculty: typeof FACULTY = FACULTY) {
   vi.stubGlobal("fetch", async (input: string | URL) => {
     const url = String(input);
     if (url.includes("term/search")) return json({}, { "Set-Cookie": "JSESSIONID=abc; Path=/" });
     if (url.includes("searchResults/searchResults")) {
       return json({
         totalCount: 1,
-        data: [{ courseReferenceNumber: "12345", subject: "CS", courseNumber: "1000", courseTitle: "Test", meetingsFaculty: [{ faculty: FACULTY, meetingTime: null }] }],
+        data: [{ courseReferenceNumber: "12345", subject: "CS", courseNumber: "1000", courseTitle: "Test", meetingsFaculty: [{ faculty: searchFaculty, meetingTime: null }] }],
       });
     }
     if (url.includes("getFacultyMeetingTimes")) return json({ fmt: [{ faculty: FACULTY }] });
@@ -49,6 +49,14 @@ describe("Banner routes expose only exact institutional emails", () => {
     mockBanner();
     const { GET } = await import("./course/route");
     const response = await GET(new Request("http://localhost/api/banner/course?term=209911&subject=CS&number=1000"));
+    expect(response.status).toBe(200);
+    expectOnlyAllowedAddresses(await response.text());
+  });
+
+  it("GET /api/banner/course fallback from getFacultyMeetingTimes", async () => {
+    mockBanner([]);
+    const { GET } = await import("./course/route");
+    const response = await GET(new Request("http://localhost/api/banner/course?term=209912&subject=CS&number=1000"));
     expect(response.status).toBe(200);
     expectOnlyAllowedAddresses(await response.text());
   });
