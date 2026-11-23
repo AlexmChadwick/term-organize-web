@@ -129,6 +129,18 @@ describe("ScheduleSupportTests", () => {
     expect(notices.every((item) => item.fix == null)).toBe(true);
   });
 
+  it("fullNoticeNamesTheQueueOnlyWhenThereIsOne", () => {
+    const base = section("B1", "MATH", "2331", [1], 11, 12, { seats: 0 });
+    const fullLine = (over: Partial<CourseSection>) => {
+      const index = indexOf([catalogCourse("MATH", "2331")], [{ ...base, ...over }]);
+      const notices = scheduleNotices(new ResolvedPlan(plan(["MATH 2331"], ["B1"]), index), "Fall 2026", false);
+      return notices.find((item) => item.id === "full")?.lines[0];
+    };
+    expect(fullLine({ waitlistCapacity: 10, waitlistCount: 3 })).toBe("MATH 2331 Lecture 01 is full \u00b7 Waitlist 3/10");
+    expect(fullLine({ waitlistCapacity: 0, waitlistCount: 3 })).toBe("MATH 2331 Lecture 01 is full \u00b7 Waitlist 3");
+    expect(fullLine({ waitlistCapacity: 0, waitlistCount: 0 })).toBe("MATH 2331 Lecture 01 is full");
+  });
+
   it("noticesOfferToForgetSectionsTheCatalogDoesNotList", () => {
     const index = clashingIndex();
     const resolved = new ResolvedPlan(plan(["CS 3000"], ["A1", "99999", "C1"]), index);
