@@ -2,6 +2,7 @@
 
 import { bundledTermCodes, bundledTermOptions, initialTermCode, mergeTermOptions, newestBundledTermCode, type TermOption } from "@/lib/bundled-terms";
 import { refreshCreditsFromCatalog } from "@/lib/credit-sync";
+import { normalizeBundledCatalog } from "@/lib/catalog-normalize";
 import { CatalogIndex } from "@/lib/catalog-index";
 import { idbGetCatalog, idbSetCatalog } from "@/lib/idb";
 import type { Course, CourseKey, CourseSection, Term, TermCatalog } from "@/lib/models";
@@ -501,11 +502,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
-async function fetchCatalog(term: string): Promise<TermCatalog | null> {
+export async function fetchCatalog(term: string): Promise<TermCatalog | null> {
   const res = await fetch(`/api/catalog/${term}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error("The catalog did not load. Refresh the page.");
-  return (await res.json()) as TermCatalog;
+  // Filter before the catalog is indexed or written to the cache.
+  return normalizeBundledCatalog((await res.json()) as TermCatalog);
 }
 
 export function useApp(): AppContextValue {

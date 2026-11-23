@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { normalizeWaitlist, type TermCatalog } from "./models";
+import { normalizeBundledCatalog } from "./catalog-normalize";
+import type { TermCatalog } from "./models";
 
 const DB_NAME = "term-organize";
 const STORE = "catalogs";
@@ -29,7 +30,8 @@ export async function idbGetCatalog(term: string): Promise<TermCatalog | null> {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, "readonly");
       const req = tx.objectStore(STORE).get(term);
-      req.onsuccess = () => resolve(req.result ? normalizeWaitlist(req.result as TermCatalog) : null);
+      // A catalog saved before email filtering can still sit in this cache.
+      req.onsuccess = () => resolve(req.result ? normalizeBundledCatalog(req.result as TermCatalog) : null);
       req.onerror = () => reject(req.error);
     });
   } catch {
@@ -43,7 +45,7 @@ export async function idbSetCatalog(term: string, catalog: TermCatalog): Promise
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(catalog, term);
+      tx.objectStore(STORE).put(normalizeBundledCatalog(catalog), term);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
