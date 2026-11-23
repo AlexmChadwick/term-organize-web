@@ -1,27 +1,12 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { publishedInstructorEmail } from "./instructor-email";
-import { normalizeWaitlist, type Instructor, type TermCatalog } from "./models";
+import { normalizeBundledCatalog } from "./catalog-normalize";
+import type { TermCatalog } from "./models";
+
+export { normalizeBundledCatalog };
 
 const memory = new Map<string, TermCatalog>();
-
-/** Filters instructor emails while preserving omitted and null fields. */
-export function normalizeBundledCatalog(catalog: TermCatalog): TermCatalog {
-  return normalizeWaitlist({
-    ...catalog,
-    sections: catalog.sections.map((section) => section.instructors
-      ? { ...section, instructors: section.instructors.map(normalizeInstructor) }
-      : section),
-  });
-}
-
-function normalizeInstructor(instructor: Instructor): Instructor {
-  const { email, ...fields } = instructor;
-  if (typeof email !== "string") return instructor;
-  const published = publishedInstructorEmail(email);
-  return published === undefined ? fields : { ...fields, email: published };
-}
 
 function bundledPath(term: string): string {
   return path.join(process.cwd(), "data", `term-${term}.json.gz`);
