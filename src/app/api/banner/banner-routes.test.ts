@@ -61,6 +61,23 @@ describe("Banner routes expose only exact institutional emails", () => {
     expectOnlyAllowedAddresses(await response.text());
   });
 
+  it("GET /api/banner/course drops an instructor email that uses U+FE6B as @", async () => {
+    mockBanner([
+      { displayName: "Kept, Ada", emailAddress: "Ada.Lovelace@Northeastern.EDU", primaryIndicator: true },
+      { displayName: "Fold, Jo", emailAddress: "jo\uFE6Bneu.edu", primaryIndicator: false },
+      { displayName: "External, Di", emailAddress: "di@gmail.com", primaryIndicator: false },
+    ]);
+    const { GET } = await import("./course/route");
+    const response = await GET(new Request("http://localhost/api/banner/course?term=209913&subject=CS&number=1000"));
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("Ada.Lovelace@Northeastern.EDU");
+    expect(text).not.toContain("jo\uFE6Bneu.edu");
+    expect(text).not.toContain("jo@neu.edu");
+    expect(text).not.toContain("gmail");
+    expect(text).not.toContain("\uFE6B");
+  });
+
   it("POST /api/banner/watch", async () => {
     mockBanner();
     const { POST } = await import("./watch/route");

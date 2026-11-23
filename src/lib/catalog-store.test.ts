@@ -152,6 +152,13 @@ describe("raw catalog email check", () => {
     expect(prose("jo@example&period;org").length).toBeGreaterThan(0);
   });
 
+  it("catches a small commercial at (U+FE6B) used as an obfuscated @ in prose", () => {
+    // NFKC folds U+FE6B to ASCII @. The neu.edu forms would then look allowed, so the check has to use the pre-NFKC text.
+    expect(prose("jo\uFE6Bneu.edu").length).toBeGreaterThan(0);
+    expect(prose("mail jo\uFE6Bnortheastern.edu today").length).toBeGreaterThan(0);
+    expect(prose("jo\uFE6Bexample.org").length).toBeGreaterThan(0);
+  });
+
   it("allows encoded allowed addresses", () => {
     expect(prose("jo&#64;neu.edu and jo%40northeastern.edu.")).toEqual([]);
   });
