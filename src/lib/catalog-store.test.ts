@@ -165,6 +165,11 @@ describe("raw catalog email check", () => {
     expect(prose("jo@example&period;org").length).toBeGreaterThan(0);
   });
 
+  it("catches a small commercial at (U+FE6B) in prose", () => {
+    expect(prose("jo\ufe6bexample.org").length).toBeGreaterThan(0);
+    expect(prose("jo\ufe6bneu.edu")).toEqual([]);
+  });
+
   it("allows encoded allowed addresses", () => {
     expect(prose("jo&#64;neu.edu and jo%40northeastern.edu.")).toEqual([]);
   });
@@ -196,6 +201,7 @@ describe("runtime email validator", () => {
       expect(publishedInstructorEmail(bad), bad).toBeUndefined();
     }
     expect(publishedInstructorEmail("A!b#c'd+e@NEU.EDU")).toBe("A!b#c'd+e@NEU.EDU");
+    expect(publishedInstructorEmail("a\ufe6bneu.edu")).toBeUndefined();
   });
 });
 
