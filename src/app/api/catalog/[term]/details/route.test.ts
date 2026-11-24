@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 type Filled = { filled: number; remaining: number; catalog: unknown } | null;
 
 let outcome: () => Promise<Filled> = async () => null;
-const fill = vi.fn((_term: string) => outcome());
+const fill = vi.fn<(term: string) => Promise<Filled>>(() => outcome());
 
 vi.mock("@/lib/banner-server", () => ({ fillTermCourseDetails: (term: string) => fill(term) }));
 
