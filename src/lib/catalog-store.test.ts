@@ -23,6 +23,31 @@ function catalogWith(instructors: Instructor[]): TermCatalog {
   };
 }
 
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
+describe("bundled catalog normalization", () => {
+  it("does not mutate a deep-frozen input and returns copies", () => {
+    const base = catalogWith([{ name: "Work", primary: true, email: "person@gmail.com" }]);
+    const bare = { crn: "1", seatsRemaining: 2 } as CourseSection;
+    const input = deepFreeze({ ...base, sections: [...base.sections, bare] });
+    const snapshot = JSON.stringify(input);
+
+    const out = normalizeBundledCatalog(input);
+
+    expect(JSON.stringify(input)).toBe(snapshot);
+    expect("waitlistCount" in bare).toBe(false);
+    expect(out.sections[1]).not.toBe(bare);
+    expect(out.sections[1]?.waitlistCount).toBe(0);
+    expect(out.sections[0]?.instructors?.[0]).not.toHaveProperty("email", "person@gmail.com");
+  });
+});
+
 describe("bundled catalog emails", () => {
   it("tolerates an omitted email and does not add another address", () => {
     const omitted: Instructor = { name: "No Email", primary: true };
@@ -140,6 +165,11 @@ describe("raw catalog email check", () => {
     expect(prose("jo@example&period;org").length).toBeGreaterThan(0);
   });
 
+  it("catches a small commercial at (U+FE6B) in prose", () => {
+    expect(prose("jo\ufe6bexample.org").length).toBeGreaterThan(0);
+    expect(prose("jo\ufe6bneu.edu")).toEqual([]);
+  });
+
   it("allows encoded allowed addresses", () => {
     expect(prose("jo&#64;neu.edu and jo%40northeastern.edu.")).toEqual([]);
   });
@@ -171,6 +201,7 @@ describe("runtime email validator", () => {
       expect(publishedInstructorEmail(bad), bad).toBeUndefined();
     }
     expect(publishedInstructorEmail("A!b#c'd+e@NEU.EDU")).toBe("A!b#c'd+e@NEU.EDU");
+    expect(publishedInstructorEmail("a\ufe6bneu.edu")).toBeUndefined();
   });
 });
 

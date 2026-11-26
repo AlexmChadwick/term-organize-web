@@ -585,12 +585,15 @@ export function waitlistLabel(s: CourseSection): string | null {
 
 /** Fills waitlist numbers missing from catalogs saved before they were recorded. */
 export function normalizeWaitlist(catalog: TermCatalog): TermCatalog {
-  for (const s of catalog.sections) {
-    s.waitlistCapacity ??= 0;
-    s.waitlistCount ??= 0;
-    s.waitlistRemaining ??= 0;
-  }
-  return catalog;
+  return {
+    ...catalog,
+    sections: catalog.sections.map((s) => ({
+      ...s,
+      waitlistCapacity: s.waitlistCapacity ?? 0,
+      waitlistCount: s.waitlistCount ?? 0,
+      waitlistRemaining: s.waitlistRemaining ?? 0,
+    })),
+  };
 }
 
 export function sectionIsOnline(s: CourseSection): boolean {
@@ -633,7 +636,7 @@ export function seatsLabel(s: CourseSection): string {
 
 /** One line in the schedule section picker. */
 export function sectionChoice(section: CourseSection): string {
-  const when = scheduleSummary(section).replaceAll(" – ", "–");
+  const when = scheduleSummary(section).replaceAll(" \u2013 ", "\u2013");
   const waitlist = waitlistLabel(section);
   return `${section.crn} · ${when} · ${Math.max(0, openSeats(section))} open${waitlist ? ` · ${waitlist}` : ""}`;
 }

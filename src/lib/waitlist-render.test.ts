@@ -159,6 +159,12 @@ describe("raw seat reads", () => {
     expect(sectionMatchesFilters(open, searchFilters({ openSeatsOnly: true }))).toBe(true);
   });
 
+  it("the schedule picker line collapses the spaced en dash in times", () => {
+    const timed = { ...open, meetings: [{ days: 2, start: 540, end: 630, kind: "Class" }] };
+    expect(sectionChoice(timed)).toContain("9:00\u201310:30");
+    expect(sectionChoice(timed)).not.toContain(" \u2013 ");
+  });
+
   it("seatsLabel reads 0 of 15 seats for a queued section", () => {
     expect(seatsLabel(queued)).toBe("0 of 15 seats");
     expect(seatsLabel(open)).toBe("2 of 15 seats");
