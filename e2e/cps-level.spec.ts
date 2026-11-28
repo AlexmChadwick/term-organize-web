@@ -37,7 +37,11 @@ test("undergrad and grad filter combines with the other filters", async ({ page 
 
 test("a CPS-only course shows the restriction note", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "desktop screenshots only");
-  await page.addInitScript(() => localStorage.setItem("term-organize.theme", "light"));
+  await page.addInitScript(() => {
+    localStorage.setItem("term-organize.theme", "light");
+    // A fresh session opens the newest bundled term (Spring 2027). This fixture is Fall 2026.
+    localStorage.setItem("term-organize.user.v1", JSON.stringify({ version: 1, preferences: { selectedTermCode: "202710" } }));
+  });
   await page.route("**/api/catalog/202710", async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
